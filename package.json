@@ -2,8 +2,8 @@
   "name": "ultra-delete",
   "displayName": "Ultra Delete",
   "description": "Delete entire variables, functions, object keys, or class members with a single keypress",
-  "version": "1.0.0",
-  "publisher": "your-publisher-name",
+  "version": "1.0.3",
+  "publisher": "henry-dorsett-case",
   "author": {
     "name": "Georgy Sosnin",
     "email": "conspiracy444@yandex.ru"
@@ -11,11 +11,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/variable-function-deleter.git"
+    "url": "https://github.com/fushugaku/Ultra-Delete"
   },
-  "homepage": "https://github.com/yourusername/variable-function-deleter",
+  "homepage": "https://github.com/fushugaku/Ultra-Delete",
   "bugs": {
-    "url": "https://github.com/yourusername/variable-function-deleter/issues"
+    "url": "https://github.com/fushugaku/Ultra-Delete/issues"
   },
   "keywords": [
     "delete",
@@ -44,7 +44,12 @@
     "commands": [
       {
         "command": "variableFunctionDeleter.deleteAtCursor",
-        "title": "Delete Variable or Function at Cursor",
+        "title": "Delete Element at Cursor",
+        "category": "Variable Function Deleter"
+      },
+      {
+        "command": "variableFunctionDeleter.cutAtCursor",
+        "title": "Cut Element at Cursor",
         "category": "Variable Function Deleter"
       }
     ],
@@ -53,6 +58,12 @@
         "command": "variableFunctionDeleter.deleteAtCursor",
         "key": "ctrl+shift+d",
         "mac": "cmd+shift+d",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "variableFunctionDeleter.cutAtCursor",
+        "key": "ctrl+shift+x",
+        "mac": "cmd+shift+x",
         "when": "editorTextFocus"
       }
     ]
