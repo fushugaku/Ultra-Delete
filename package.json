@@ -1,8 +1,8 @@
 {
   "name": "ultra-delete",
-  "displayName": "Ultra Delete",
-  "description": "Delete entire variables, functions, object keys, or class members with a single keypress",
-  "version": "1.0.3",
+  "displayName": "Ultra Cut Delete",
+  "description": "Delete or cut entire variables, functions, object keys, or class members with a single keypress",
+  "version": "1.0.9",
   "publisher": "henry-dorsett-case",
   "author": {
     "name": "Georgy Sosnin",

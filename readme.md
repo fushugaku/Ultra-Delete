@@ -9,11 +9,17 @@ A VS Code extension that allows you to delete entire variables or functions with
 - **Multi-language Support**: Works with JavaScript, TypeScript, Python, Java, C#, and more
 - **Smart Detection**: Handles complex variable assignments (objects, arrays) and various function syntaxes
 
-## Usage
+## Deleting
 
 1. Place your cursor on a variable name or function name
 2. Press `Ctrl+Shift+D` (Windows/Linux) or `Cmd+Shift+D` (Mac)
 3. The entire variable or function will be deleted
+
+## Cutting
+
+1. Place your cursor on a variable name or function name
+2. Press `Ctrl+Shift+X` (Windows/Linux) or `Cmd+Shift+X` (Mac)
+3. The entire variable or function will be cut to clipboard
 
 ## Supported Languages
 
