@@ -130,22 +130,15 @@ export class ElementDetector {
     }
 
     // Priority order for TypeScript/TSX - most specific first:
-    // 1. Class members (methods, properties inside classes)
+    // 1. Variables
     // 2. Object properties (inside object literals)
-    // 3. Variables
-    // 4. Functions (standalone functions)
-    // 5. Multiline strings
+    // 3. Functions (standalone functions)
+    // 4. Multiline strings
+    // 5. Class members (methods, properties inside classes)
+
+
+
     // 6. Classes (only if not inside a class member)
-
-    const classMemberRange = handler.getClassMemberRange(document, position, word);
-    if (classMemberRange) {
-      return classMemberRange;
-    }
-
-    const objectKeyRange = handler.getObjectKeyRange(document, position, word);
-    if (objectKeyRange) {
-      return objectKeyRange;
-    }
 
     const variableRange = handler.getVariableRange(document, position, word);
     if (variableRange) {
@@ -157,9 +150,20 @@ export class ElementDetector {
       return functionRange;
     }
 
+
     const multilineStringRange = handler.getMultilineStringRange(document, position, word);
     if (multilineStringRange) {
       return multilineStringRange;
+    }
+
+    const objectKeyRange = handler.getObjectKeyRange(document, position, word);
+    if (objectKeyRange) {
+      return objectKeyRange;
+    }
+
+    const classMemberRange = handler.getClassMemberRange(document, position, word);
+    if (classMemberRange) {
+      return classMemberRange;
     }
 
     // Only check for classes last, when we're not inside a more specific element
