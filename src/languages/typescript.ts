@@ -13,6 +13,14 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   // PUBLIC API METHODS
   // ========================================
 
+  getImportRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
+    return this.getElementRangeUsingAST(document, position, [
+      ts.SyntaxKind.ImportDeclaration,
+      ts.SyntaxKind.ImportEqualsDeclaration,
+      ts.SyntaxKind.ExportDeclaration,
+      ts.SyntaxKind.ExportAssignment
+    ]);
+  }
 
 
 
@@ -146,13 +154,17 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   private getNodeRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
-    // Get the exact range for the specific node type
     switch (node.kind) {
+      case ts.SyntaxKind.ImportDeclaration:
+      case ts.SyntaxKind.ImportEqualsDeclaration:
+      case ts.SyntaxKind.ExportDeclaration:
+      case ts.SyntaxKind.ExportAssignment:
+        return this.getImportExportRange(document, node);
+
       case ts.SyntaxKind.CallExpression:
         return this.getCallExpressionRange(document, node);
 
       case ts.SyntaxKind.VariableDeclaration:
-        // For variable declarations, get the entire statement
         const statement = this.findAncestorOfKind(node, ts.SyntaxKind.VariableStatement);
         if (statement) {
           return this.nodeToRange(document, statement);
@@ -162,7 +174,6 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       case ts.SyntaxKind.PropertyAssignment:
       case ts.SyntaxKind.ShorthandPropertyAssignment:
       case ts.SyntaxKind.PropertySignature:
-        // For object properties, include the entire property with value and trailing comma
         return this.getPropertyRange(document, node);
 
       case ts.SyntaxKind.MethodDeclaration:
@@ -170,13 +181,11 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       case ts.SyntaxKind.GetAccessor:
       case ts.SyntaxKind.SetAccessor:
       case ts.SyntaxKind.Constructor:
-        // For class members, include only the member itself (not expanding to class)
         return this.getClassMemberNodeRange(document, node);
 
       case ts.SyntaxKind.FunctionDeclaration:
       case ts.SyntaxKind.ArrowFunction:
       case ts.SyntaxKind.FunctionExpression:
-        // For functions, include the entire function
         return this.getFunctionNodeRange(document, node);
 
       default:
@@ -184,6 +193,22 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     }
 
     return this.nodeToRange(document, node);
+  }
+
+  private getImportExportRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
+    // For import/export statements, include the entire statement
+    let start = document.positionAt(node.getStart());
+    let end = document.positionAt(node.getEnd());
+
+    // Try to include the semicolon if it exists
+    const line = document.lineAt(end.line);
+    const textAfterNode = line.text.substring(end.character);
+    const semicolonMatch = textAfterNode.match(/^\s*;/);
+    if (semicolonMatch) {
+      end = new vscode.Position(end.line, end.character + semicolonMatch[0].length);
+    }
+
+    return new vscode.Range(start, end);
   }
 
   // Update the findDirectNodeAtPosition to be more precise about property detection
@@ -291,6 +316,18 @@ export class TypeScriptHandler extends BaseLanguageHandler {
 
   private isValidScopeForPosition(node: ts.Node, position: number): boolean {
     switch (node.kind) {
+      case ts.SyntaxKind.ImportDeclaration:
+        return this.isCursorOnImportDeclaration(node, position);
+
+      case ts.SyntaxKind.ImportEqualsDeclaration:
+        return this.isCursorOnImportEqualsDeclaration(node, position);
+
+      case ts.SyntaxKind.ExportDeclaration:
+        return this.isCursorOnExportDeclaration(node, position);
+
+      case ts.SyntaxKind.ExportAssignment:
+        return this.isCursorOnExportAssignment(node, position);
+
       case ts.SyntaxKind.CallExpression:
         return this.isCursorOnCallExpression(node, position);
 
@@ -313,6 +350,102 @@ export class TypeScriptHandler extends BaseLanguageHandler {
         return true;
     }
   }
+
+  private isCursorOnImportDeclaration(node: ts.Node, position: number): boolean {
+    if (!ts.isImportDeclaration(node)) {
+      return false;
+    }
+
+    // Check if cursor is on the import keyword, module specifier, or import clause
+    const importKeywordStart = node.getStart();
+    const importKeywordEnd = importKeywordStart + 6; // "import".length
+
+    // Cursor on "import" keyword
+    if (position >= importKeywordStart && position <= importKeywordEnd) {
+      return true;
+    }
+
+    // Cursor on module specifier (the string after 'from')
+    if (node.moduleSpecifier) {
+      const moduleStart = node.moduleSpecifier.getStart();
+      const moduleEnd = node.moduleSpecifier.getEnd();
+      if (position >= moduleStart && position <= moduleEnd) {
+        return true;
+      }
+    }
+
+    // Cursor on import clause (the imported names)
+    if (node.importClause) {
+      const clauseStart = node.importClause.getStart();
+      const clauseEnd = node.importClause.getEnd();
+      if (position >= clauseStart && position <= clauseEnd) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private isCursorOnImportEqualsDeclaration(node: ts.Node, position: number): boolean {
+    if (!ts.isImportEqualsDeclaration(node)) {
+      return false;
+    }
+
+    // Check if cursor is on the import keyword or the imported name
+    const importKeywordStart = node.getStart();
+    const nameEnd = node.name.getEnd();
+
+    return position >= importKeywordStart && position <= nameEnd;
+  }
+
+
+  private isCursorOnExportDeclaration(node: ts.Node, position: number): boolean {
+    if (!ts.isExportDeclaration(node)) {
+      return false;
+    }
+
+    // Check if cursor is on the export keyword or export clause
+    const exportKeywordStart = node.getStart();
+    const exportKeywordEnd = exportKeywordStart + 6; // "export".length
+
+    // Cursor on "export" keyword
+    if (position >= exportKeywordStart && position <= exportKeywordEnd) {
+      return true;
+    }
+
+    // Cursor on export clause or module specifier
+    if (node.exportClause) {
+      const clauseStart = node.exportClause.getStart();
+      const clauseEnd = node.exportClause.getEnd();
+      if (position >= clauseStart && position <= clauseEnd) {
+        return true;
+      }
+    }
+
+    if (node.moduleSpecifier) {
+      const moduleStart = node.moduleSpecifier.getStart();
+      const moduleEnd = node.moduleSpecifier.getEnd();
+      if (position >= moduleStart && position <= moduleEnd) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private isCursorOnExportAssignment(node: ts.Node, position: number): boolean {
+    if (!ts.isExportAssignment(node)) {
+      return false;
+    }
+
+    // Check if cursor is on the export keyword
+    const exportKeywordStart = node.getStart();
+    const exportKeywordEnd = exportKeywordStart + 6; // "export".length
+
+    return position >= exportKeywordStart && position <= exportKeywordEnd;
+  }
+
+
 
   // ========================================
   // CURSOR POSITION VALIDATION

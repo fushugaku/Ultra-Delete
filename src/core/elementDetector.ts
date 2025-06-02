@@ -2,7 +2,6 @@
 import * as vscode from 'vscode';
 import { LanguageHandler } from '../languages/base/baseLanguage';
 import { JavaScriptHandler } from '../languages/javascript';
-import { TypeScriptHandler } from '../languages/typescript';
 import { HtmlHandler } from '../languages/html';
 import { JsonHandler } from '../languages/json';
 import { PythonHandler } from '../languages/python';
@@ -11,6 +10,7 @@ import { CSharpHandler } from '../languages/csharp';
 import { CppHandler } from '../languages/cpp';
 import { GoHandler } from '../languages/go';
 import { RustHandler } from '../languages/rust';
+import { TypeScriptHandler } from '../languages/typescript';
 
 export class ElementDetector {
   private handlers: Map<string, LanguageHandler> = new Map();
@@ -56,6 +56,8 @@ export class ElementDetector {
 
   // In elementDetector.ts - update the getTypescriptElementRange method:
 
+  // elementDetector.ts - update getTypescriptElementRange method
+
   private getTypescriptElementRange(
     document: vscode.TextDocument,
     position: vscode.Position,
@@ -72,6 +74,15 @@ export class ElementDetector {
       }
     }
 
+    // Check for imports/exports EARLY (they're usually at the top and should be easy to cut)
+    if (['import', 'export', 'from', 'require'].includes(word) ||
+      this.isLikelyInImportStatement(document, position)) {
+      const importRange = handler.getImportRange(document, position, word);
+      if (importRange) {
+        return importRange;
+      }
+    }
+
     // Check for conditional blocks (if/else keywords)
     if (['if', 'else'].includes(word) && handler.getConditionalBlockRange) {
       const conditionalRange = handler.getConditionalBlockRange(document, position, word);
@@ -81,14 +92,12 @@ export class ElementDetector {
     }
 
     // Check for object keys/properties EARLY - before function calls
-    // This ensures nested object properties are detected before the containing object
     const objectKeyRange = handler.getObjectKeyRange(document, position, word);
     if (objectKeyRange) {
       return objectKeyRange;
     }
 
     // PRIORITIZE FUNCTION CALLS - check functions BEFORE class members
-    // This will catch function calls like onMounted(), watch(), etc.
     const functionRange = handler.getFunctionRange(document, position, word);
     if (functionRange) {
       return functionRange;
@@ -101,7 +110,6 @@ export class ElementDetector {
     }
 
     // Check for class members AFTER function calls
-    // This prevents method declarations from overriding function calls inside them
     const classMemberRange = handler.getClassMemberRange(document, position, word);
     if (classMemberRange) {
       return classMemberRange;
@@ -120,6 +128,19 @@ export class ElementDetector {
     }
 
     return null;
+  }
+
+  // Add helper method to detect if we're likely in an import statement
+  private isLikelyInImportStatement(document: vscode.TextDocument, position: vscode.Position): boolean {
+    const line = document.lineAt(position.line);
+    const lineText = line.text.trim();
+
+    // Check if line starts with import/export or contains 'from'
+    return lineText.startsWith('import ') ||
+      lineText.startsWith('export ') ||
+      lineText.includes(' from ') ||
+      lineText.startsWith('const ') && lineText.includes('require(') ||
+      lineText.startsWith('import(');
   }
 
   private initializeHandlers() {
