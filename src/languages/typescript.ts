@@ -13,6 +13,9 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   // PUBLIC API METHODS
   // ========================================
 
+
+
+
   getClassRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
     return this.getElementRangeUsingAST(document, position, [
       ts.SyntaxKind.ClassDeclaration,
@@ -25,11 +28,21 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   getFunctionRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
+    // First check for call expressions (like onMounted, watch, etc.)
+    const callExpressionRange = this.getElementRangeUsingAST(document, position, [
+      ts.SyntaxKind.CallExpression
+    ]);
+
+    if (callExpressionRange) {
+      return callExpressionRange;
+    }
+
+    // Then check for function declarations/expressions
     return this.getElementRangeUsingAST(document, position, [
       ts.SyntaxKind.FunctionDeclaration,
       ts.SyntaxKind.ArrowFunction,
       ts.SyntaxKind.FunctionExpression,
-      ts.SyntaxKind.MethodDeclaration // Include methods in function detection
+      ts.SyntaxKind.MethodDeclaration
     ]);
   }
 
@@ -132,6 +145,96 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     }
   }
 
+  private getNodeRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
+    // Get the exact range for the specific node type
+    switch (node.kind) {
+      case ts.SyntaxKind.CallExpression:
+        return this.getCallExpressionRange(document, node);
+
+      case ts.SyntaxKind.VariableDeclaration:
+        // For variable declarations, get the entire statement
+        const statement = this.findAncestorOfKind(node, ts.SyntaxKind.VariableStatement);
+        if (statement) {
+          return this.nodeToRange(document, statement);
+        }
+        break;
+
+      case ts.SyntaxKind.PropertyAssignment:
+      case ts.SyntaxKind.ShorthandPropertyAssignment:
+      case ts.SyntaxKind.PropertySignature:
+        // For object properties, include the entire property with value and trailing comma
+        return this.getPropertyRange(document, node);
+
+      case ts.SyntaxKind.MethodDeclaration:
+      case ts.SyntaxKind.PropertyDeclaration:
+      case ts.SyntaxKind.GetAccessor:
+      case ts.SyntaxKind.SetAccessor:
+      case ts.SyntaxKind.Constructor:
+        // For class members, include only the member itself (not expanding to class)
+        return this.getClassMemberNodeRange(document, node);
+
+      case ts.SyntaxKind.FunctionDeclaration:
+      case ts.SyntaxKind.ArrowFunction:
+      case ts.SyntaxKind.FunctionExpression:
+        // For functions, include the entire function
+        return this.getFunctionNodeRange(document, node);
+
+      default:
+        return this.nodeToRange(document, node);
+    }
+
+    return this.nodeToRange(document, node);
+  }
+
+  // Update the findDirectNodeAtPosition to be more precise about property detection
+  private findDirectNodeAtPosition(
+    node: ts.Node,
+    position: number,
+    targetKinds: ts.SyntaxKind[]
+  ): ts.Node | null {
+    // Find the deepest node that contains the position
+    const containingNode = this.findDeepestContainingNode(node, position);
+    if (!containingNode) {
+      return null;
+    }
+
+    // For property assignments, we want to be very specific
+    if (targetKinds.includes(ts.SyntaxKind.PropertyAssignment) ||
+      targetKinds.includes(ts.SyntaxKind.ShorthandPropertyAssignment)) {
+
+      // Walk up to find the most immediate property assignment
+      let current: ts.Node | undefined = containingNode;
+      let foundProperty: ts.Node | null = null;
+
+      while (current) {
+        if ((ts.isPropertyAssignment(current) || ts.isShorthandPropertyAssignment(current)) &&
+          this.isValidScopeForPosition(current, position)) {
+          foundProperty = current;
+          // Don't break here - we want the most immediate property
+        }
+        current = current.parent;
+      }
+
+      if (foundProperty) {
+        return foundProperty;
+      }
+    }
+
+    // For other kinds, use the original logic
+    let current: ts.Node | undefined = containingNode;
+    while (current) {
+      if (targetKinds.includes(current.kind)) {
+        // Additional validation to ensure we're at the right scope level
+        if (this.isValidScopeForPosition(current, position)) {
+          return current;
+        }
+      }
+      current = current.parent;
+    }
+
+    return null;
+  }
+
   private createSourceFile(document: vscode.TextDocument): ts.SourceFile {
     // Determine script kind based on file extension or language ID
     let scriptKind = ts.ScriptKind.TS;
@@ -165,31 +268,7 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   // NODE FINDING AND VALIDATION
   // ========================================
 
-  private findDirectNodeAtPosition(
-    node: ts.Node,
-    position: number,
-    targetKinds: ts.SyntaxKind[]
-  ): ts.Node | null {
-    // Find the deepest node that contains the position
-    const containingNode = this.findDeepestContainingNode(node, position);
-    if (!containingNode) {
-      return null;
-    }
 
-    // Walk up the tree to find the first node that matches our target kinds
-    let current: ts.Node | undefined = containingNode;
-    while (current) {
-      if (targetKinds.includes(current.kind)) {
-        // Additional validation to ensure we're at the right scope level
-        if (this.isValidScopeForPosition(current, position)) {
-          return current;
-        }
-      }
-      current = current.parent;
-    }
-
-    return null;
-  }
 
   private findDeepestContainingNode(node: ts.Node, position: number): ts.Node | null {
     // Check if position is within this node
@@ -212,6 +291,9 @@ export class TypeScriptHandler extends BaseLanguageHandler {
 
   private isValidScopeForPosition(node: ts.Node, position: number): boolean {
     switch (node.kind) {
+      case ts.SyntaxKind.CallExpression:
+        return this.isCursorOnCallExpression(node, position);
+
       case ts.SyntaxKind.FunctionDeclaration:
       case ts.SyntaxKind.ArrowFunction:
       case ts.SyntaxKind.FunctionExpression:
@@ -235,6 +317,31 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   // ========================================
   // CURSOR POSITION VALIDATION
   // ========================================
+
+  private isCursorOnCallExpression(node: ts.Node, position: number): boolean {
+    if (!ts.isCallExpression(node)) {
+      return false;
+    }
+
+    // Check if cursor is on the function name being called
+    const expression = node.expression;
+
+    if (ts.isIdentifier(expression)) {
+      // Simple function call like onMounted()
+      const nameStart = expression.getStart();
+      const nameEnd = expression.getEnd();
+      return position >= nameStart && position <= nameEnd;
+    } else if (ts.isPropertyAccessExpression(expression)) {
+      // Method call like obj.method()
+      const nameStart = expression.name.getStart();
+      const nameEnd = expression.name.getEnd();
+      return position >= nameStart && position <= nameEnd;
+    }
+
+    // For other types of call expressions, allow if cursor is anywhere in the expression part
+    const expressionEnd = expression.getEnd();
+    return position >= expression.getStart() && position <= expressionEnd;
+  }
 
   private isCursorOnFunctionDeclaration(node: ts.Node, position: number): boolean {
     if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) {
@@ -291,11 +398,100 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       if (name) {
         const nameStart = name.getStart();
         const nameEnd = name.getEnd();
+        // Allow cursor anywhere on the property name
         return position >= nameStart && position <= nameEnd;
       }
     }
     return true;
   }
+
+  // ========================================
+  // RANGE CALCULATION
+  // ========================================
+
+
+
+  private getCallExpressionRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
+    if (!ts.isCallExpression(node)) {
+      return this.nodeToRange(document, node);
+    }
+
+    // Check if this call expression is part of an expression statement
+    // If so, include the entire statement (which will include the semicolon if present)
+    const parent = node.parent;
+    if (ts.isExpressionStatement(parent)) {
+      return this.nodeToRange(document, parent);
+    }
+
+    // If it's part of a variable declaration, include the entire declaration
+    if (ts.isVariableDeclaration(parent)) {
+      const variableStatement = this.findAncestorOfKind(parent, ts.SyntaxKind.VariableStatement);
+      if (variableStatement) {
+        return this.nodeToRange(document, variableStatement);
+      }
+    }
+
+    // Otherwise, just return the call expression itself
+    return this.nodeToRange(document, node);
+  }
+
+  private getFunctionNodeRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
+    // For functions, include any leading comments or decorators
+    let start = node.getStart();
+
+    // Check for leading trivia (comments, etc.)
+    const fullStart = node.getFullStart();
+    if (fullStart < start) {
+      const leadingTrivia = node.getSourceFile().text.substring(fullStart, start);
+      if (leadingTrivia.trim()) {
+        start = fullStart;
+      }
+    }
+
+    return new vscode.Range(
+      document.positionAt(start),
+      document.positionAt(node.getEnd())
+    );
+  }
+
+  private getPropertyRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
+    if (!ts.isPropertyAssignment(node) && !ts.isShorthandPropertyAssignment(node)) {
+      return this.nodeToRange(document, node);
+    }
+
+    // For property assignments, include the entire property (key + value)
+    let start = document.positionAt(node.getStart());
+    let end = document.positionAt(node.getEnd());
+
+    // Try to include trailing comma if it exists on the same line
+    const endLine = document.lineAt(end.line);
+    const textAfterNode = endLine.text.substring(end.character);
+    const commaMatch = textAfterNode.match(/^\s*,/);
+    if (commaMatch) {
+      end = new vscode.Position(end.line, end.character + commaMatch[0].length);
+    } else {
+      // If no comma on the same line, check if there's a comma on the next line
+      if (end.line + 1 < document.lineCount) {
+        const nextLine = document.lineAt(end.line + 1);
+        const nextLineCommaMatch = nextLine.text.match(/^\s*,/);
+        if (nextLineCommaMatch) {
+          end = new vscode.Position(end.line + 1, nextLineCommaMatch[0].length);
+        }
+      }
+    }
+
+    return new vscode.Range(start, end);
+  }
+
+
+  private getClassMemberNodeRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
+    // For class members, include any decorators and modifiers but don't expand to class level
+    return this.nodeToRange(document, node);
+  }
+
+  // ... (rest of the conditional block handling methods remain the same)
+  // ... (rest of the class member handling methods remain the same)
+  // ... (rest of the utility methods remain the same)
 
   // ========================================
   // CONDITIONAL BLOCK HANDLING
@@ -580,88 +776,6 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     }
 
     return false;
-  }
-
-  // ========================================
-  // RANGE CALCULATION
-  // ========================================
-
-  private getNodeRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
-    // Get the exact range for the specific node type
-    switch (node.kind) {
-      case ts.SyntaxKind.VariableDeclaration:
-        // For variable declarations, get the entire statement
-        const statement = this.findAncestorOfKind(node, ts.SyntaxKind.VariableStatement);
-        if (statement) {
-          return this.nodeToRange(document, statement);
-        }
-        break;
-
-      case ts.SyntaxKind.PropertyAssignment:
-      case ts.SyntaxKind.ShorthandPropertyAssignment:
-      case ts.SyntaxKind.PropertySignature:
-        // For object properties, include the entire property with value and trailing comma
-        return this.getPropertyRange(document, node);
-
-      case ts.SyntaxKind.MethodDeclaration:
-      case ts.SyntaxKind.PropertyDeclaration:
-      case ts.SyntaxKind.GetAccessor:
-      case ts.SyntaxKind.SetAccessor:
-      case ts.SyntaxKind.Constructor:
-        // For class members, include only the member itself (not expanding to class)
-        return this.getClassMemberNodeRange(document, node);
-
-      case ts.SyntaxKind.FunctionDeclaration:
-      case ts.SyntaxKind.ArrowFunction:
-      case ts.SyntaxKind.FunctionExpression:
-        // For functions, include the entire function
-        return this.getFunctionNodeRange(document, node);
-
-      default:
-        return this.nodeToRange(document, node);
-    }
-
-    return this.nodeToRange(document, node);
-  }
-
-  private getFunctionNodeRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
-    // For functions, include any leading comments or decorators
-    let start = node.getStart();
-
-    // Check for leading trivia (comments, etc.)
-    const fullStart = node.getFullStart();
-    if (fullStart < start) {
-      const leadingTrivia = node.getSourceFile().text.substring(fullStart, start);
-      if (leadingTrivia.trim()) {
-        start = fullStart;
-      }
-    }
-
-    return new vscode.Range(
-      document.positionAt(start),
-      document.positionAt(node.getEnd())
-    );
-  }
-
-  private getPropertyRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
-    // For object properties, include the entire property line including trailing comma
-    const start = document.positionAt(node.getStart());
-    let end = document.positionAt(node.getEnd());
-
-    // Try to include trailing comma if it exists
-    const line = document.lineAt(end.line);
-    const textAfterNode = line.text.substring(end.character);
-    const commaMatch = textAfterNode.match(/^\s*,/);
-    if (commaMatch) {
-      end = new vscode.Position(end.line, end.character + commaMatch[0].length);
-    }
-
-    return new vscode.Range(start, end);
-  }
-
-  private getClassMemberNodeRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
-    // For class members, include any decorators and modifiers but don't expand to class level
-    return this.nodeToRange(document, node);
   }
 
   // ========================================
