@@ -1,10 +1,10 @@
+// typescript.ts
 import * as vscode from 'vscode';
 import * as ts from 'typescript';
 import { BaseLanguageHandler, ElementType } from './base/baseLanguage';
 
 export class TypeScriptHandler extends BaseLanguageHandler {
   languageIds = ['typescript'];
-
 
   private getElementRangeUsingAST(
     document: vscode.TextDocument,
@@ -15,8 +15,8 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       const sourceFile = this.createSourceFile(document);
       const offset = document.offsetAt(position);
 
-      // Find the most specific node at the position
-      const node = this.findMostSpecificNodeAtPosition(sourceFile, offset, targetKinds);
+      // Find the node that directly contains the cursor position
+      const node = this.findDirectNodeAtPosition(sourceFile, offset, targetKinds);
       if (!node) {
         return null;
       }
@@ -38,51 +38,140 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     );
   }
 
-  private findMostSpecificNodeAtPosition(
+  private findDirectNodeAtPosition(
     node: ts.Node,
     position: number,
     targetKinds: ts.SyntaxKind[]
   ): ts.Node | null {
-    // Collect all matching nodes that contain the position
-    const matchingNodes: ts.Node[] = [];
-    this.collectMatchingNodes(node, position, targetKinds, matchingNodes);
-
-    if (matchingNodes.length === 0) {
+    // Find the deepest node that contains the position
+    const containingNode = this.findDeepestContainingNode(node, position);
+    if (!containingNode) {
       return null;
     }
 
-    // Return the most specific (smallest) node
-    return matchingNodes.reduce((smallest, current) => {
-      const smallestSize = smallest.getEnd() - smallest.getStart();
-      const currentSize = current.getEnd() - current.getStart();
-      return currentSize < smallestSize ? current : smallest;
-    });
+    // Walk up the tree to find the first node that matches our target kinds
+    let current: ts.Node | undefined = containingNode;
+    while (current) {
+      if (targetKinds.includes(current.kind)) {
+        // Additional validation to ensure we're at the right scope level
+        if (this.isValidScopeForPosition(current, position)) {
+          return current;
+        }
+      }
+      current = current.parent;
+    }
+
+    return null;
   }
 
-  private collectMatchingNodes(
-    node: ts.Node,
-    position: number,
-    targetKinds: ts.SyntaxKind[],
-    results: ts.Node[]
-  ): void {
+  private findDeepestContainingNode(node: ts.Node, position: number): ts.Node | null {
     // Check if position is within this node
     if (position < node.getStart() || position > node.getEnd()) {
-      return;
+      return null;
     }
 
-    // Check if this node matches our target kinds
-    if (targetKinds.includes(node.kind)) {
-      results.push(node);
-    }
-
-    // Recursively check children
+    // Check children first (depth-first search)
+    let deepestChild: ts.Node | null = null;
     ts.forEachChild(node, (child) => {
-      this.collectMatchingNodes(child, position, targetKinds, results);
+      const childResult = this.findDeepestContainingNode(child, position);
+      if (childResult) {
+        deepestChild = childResult;
+      }
     });
+
+    // Return the deepest child if found, otherwise this node
+    return deepestChild || node;
+  }
+
+  private isValidScopeForPosition(node: ts.Node, position: number): boolean {
+    switch (node.kind) {
+      case ts.SyntaxKind.FunctionDeclaration:
+      case ts.SyntaxKind.ArrowFunction:
+      case ts.SyntaxKind.FunctionExpression:
+        // For functions, check if cursor is on the function name/declaration line
+        return this.isCursorOnFunctionDeclaration(node, position);
+
+      case ts.SyntaxKind.MethodDeclaration:
+        // For methods, check if cursor is on the method name/declaration
+        return this.isCursorOnMethodDeclaration(node, position);
+
+      case ts.SyntaxKind.VariableDeclaration:
+        // For variables, check if cursor is on the variable name
+        return this.isCursorOnVariableName(node, position);
+
+      case ts.SyntaxKind.PropertyAssignment:
+      case ts.SyntaxKind.ShorthandPropertyAssignment:
+        // For object properties, check if cursor is on the property key
+        return this.isCursorOnPropertyKey(node, position);
+
+      default:
+        return true;
+    }
+  }
+
+  private isCursorOnFunctionDeclaration(node: ts.Node, position: number): boolean {
+    if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) {
+      // Check if cursor is on the function keyword or name
+      const functionKeywordStart = node.getStart();
+      const nameEnd = node.name ? node.name.getEnd() : node.getStart() + 8; // "function".length
+      return position >= functionKeywordStart && position <= nameEnd;
+    }
+
+    if (ts.isArrowFunction(node)) {
+      // For arrow functions, check if cursor is on parameters or before =>
+      const arrowToken = node.getChildren().find(child => child.kind === ts.SyntaxKind.EqualsGreaterThanToken);
+      if (arrowToken) {
+        return position <= arrowToken.getStart();
+      }
+    }
+
+    return true;
+  }
+
+  private isCursorOnMethodDeclaration(node: ts.Node, position: number): boolean {
+    if (ts.isMethodDeclaration(node)) {
+      // Check if cursor is on method name or before the opening brace
+      const name = node.name;
+      if (name) {
+        const nameStart = name.getStart();
+        const nameEnd = name.getEnd();
+
+        // Find the opening brace of the method body
+        const openBrace = node.getChildren().find(child => child.kind === ts.SyntaxKind.OpenBraceToken);
+        const beforeBody = openBrace ? openBrace.getStart() : nameEnd;
+
+        return position >= nameStart && position <= beforeBody;
+      }
+    }
+    return true;
+  }
+
+  private isCursorOnVariableName(node: ts.Node, position: number): boolean {
+    if (ts.isVariableDeclaration(node)) {
+      const name = node.name;
+      if (name) {
+        const nameStart = name.getStart();
+        const nameEnd = name.getEnd();
+        return position >= nameStart && position <= nameEnd;
+      }
+    }
+    return true;
+  }
+
+  private isCursorOnPropertyKey(node: ts.Node, position: number): boolean {
+    if (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) {
+      const name = node.name;
+      if (name) {
+        const nameStart = name.getStart();
+        const nameEnd = name.getEnd();
+        return position >= nameStart && position <= nameEnd;
+      }
+    }
+    return true;
   }
 
   private getNodeRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
-    // Special handling for different node types
+    // Get the exact range for the specific node type
     switch (node.kind) {
       case ts.SyntaxKind.VariableDeclaration:
         // For variable declarations, get the entire statement
@@ -95,7 +184,7 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       case ts.SyntaxKind.PropertyAssignment:
       case ts.SyntaxKind.ShorthandPropertyAssignment:
       case ts.SyntaxKind.PropertySignature:
-        // For object properties, include the entire property with value
+        // For object properties, include the entire property with value and trailing comma
         return this.getPropertyRange(document, node);
 
       case ts.SyntaxKind.MethodDeclaration:
@@ -103,8 +192,14 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       case ts.SyntaxKind.GetAccessor:
       case ts.SyntaxKind.SetAccessor:
       case ts.SyntaxKind.Constructor:
-        // For class members, include the entire member
+        // For class members, include only the member itself (not expanding to class)
         return this.getClassMemberNodeRange(document, node);
+
+      case ts.SyntaxKind.FunctionDeclaration:
+      case ts.SyntaxKind.ArrowFunction:
+      case ts.SyntaxKind.FunctionExpression:
+        // For functions, include the entire function
+        return this.getFunctionNodeRange(document, node);
 
       default:
         return this.nodeToRange(document, node);
@@ -113,9 +208,27 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     return this.nodeToRange(document, node);
   }
 
+  private getFunctionNodeRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
+    // For functions, include any leading comments or decorators
+    let start = node.getStart();
+
+    // Check for leading trivia (comments, etc.)
+    const fullStart = node.getFullStart();
+    if (fullStart < start) {
+      const leadingTrivia = node.getSourceFile().text.substring(fullStart, start);
+      if (leadingTrivia.trim()) {
+        start = fullStart;
+      }
+    }
+
+    return new vscode.Range(
+      document.positionAt(start),
+      document.positionAt(node.getEnd())
+    );
+  }
+
   private getPropertyRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
-    // For object properties, we want to include the entire property line
-    // including any trailing comma
+    // For object properties, include the entire property line including trailing comma
     const start = document.positionAt(node.getStart());
     let end = document.positionAt(node.getEnd());
 
@@ -131,31 +244,8 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   private getClassMemberNodeRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
-    // For class members, include any decorators and modifiers
-    let startNode = node;
-
-    // Check if there are decorators above this member
-    if (node.parent && ts.isClassDeclaration(node.parent)) {
-      const classNode = node.parent as ts.ClassDeclaration;
-      const memberIndex = classNode.members.indexOf(node as any);
-
-      if (memberIndex > 0) {
-        // Check if previous member ends on a different line
-        const prevMember = classNode.members[memberIndex - 1];
-        const prevEnd = document.positionAt(prevMember.getEnd());
-        const currentStart = document.positionAt(node.getStart());
-
-        if (prevEnd.line < currentStart.line - 1) {
-          // There might be decorators or comments, include them
-          const startLine = prevEnd.line + 1;
-          const startPos = new vscode.Position(startLine, 0);
-          const endPos = document.positionAt(node.getEnd());
-          return new vscode.Range(startPos, endPos);
-        }
-      }
-    }
-
-    return this.nodeToRange(document, startNode);
+    // For class members, include any decorators and modifiers but don't expand to class level
+    return this.nodeToRange(document, node);
   }
 
   private findAncestorOfKind(node: ts.Node, kind: ts.SyntaxKind): ts.Node | null {
@@ -175,7 +265,7 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     return new vscode.Range(start, end);
   }
 
-
+  // Update the priority order in elementDetector for TypeScript
   getClassRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
     return this.getElementRangeUsingAST(document, position, [
       ts.SyntaxKind.ClassDeclaration,
@@ -225,42 +315,6 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       ts.SyntaxKind.TemplateExpression,
       ts.SyntaxKind.NoSubstitutionTemplateLiteral,
       ts.SyntaxKind.StringLiteral
-    ]);
-  }
-
-  // New methods for function arguments and types
-  getFunctionArgumentRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
-    return this.getElementRangeUsingAST(document, position, [
-      ts.SyntaxKind.Parameter
-    ]);
-  }
-
-  getTypeRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
-    return this.getElementRangeUsingAST(document, position, [
-      ts.SyntaxKind.TypeReference,
-      ts.SyntaxKind.TypeLiteral,
-      ts.SyntaxKind.UnionType,
-      ts.SyntaxKind.IntersectionType,
-      ts.SyntaxKind.ArrayType,
-      ts.SyntaxKind.TupleType,
-      ts.SyntaxKind.FunctionType,
-      ts.SyntaxKind.ConstructorType,
-      ts.SyntaxKind.TypeQuery,
-      ts.SyntaxKind.TypeOperator,
-      ts.SyntaxKind.IndexedAccessType,
-      ts.SyntaxKind.MappedType,
-      ts.SyntaxKind.ConditionalType,
-      ts.SyntaxKind.InferType,
-      ts.SyntaxKind.ParenthesizedType,
-      ts.SyntaxKind.ThisType,
-      ts.SyntaxKind.TypePredicate,
-      ts.SyntaxKind.LiteralType
-    ]);
-  }
-
-  getGenericArgumentRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
-    return this.getElementRangeUsingAST(document, position, [
-      ts.SyntaxKind.TypeParameter
     ]);
   }
 

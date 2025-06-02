@@ -94,17 +94,17 @@ export class ElementDetector {
     console.log
 
     // For TypeScript and TSX, use a different priority order that favors granular elements
-    // if (languageId === 'typescript' || languageId === 'tsx' || languageId === 'typescriptreact') {
-    //   return this.getTypescriptElementRange(document, position, word, handler, languageId);
-    // }
+    if (languageId === 'typescript' || languageId === 'tsx' || languageId === 'typescriptreact') {
+      return this.getTypescriptElementRange(document, position, word, handler, languageId);
+    }
 
-    // if (handler.isHtmlLike()) {
-    //   const htmlHandler = handler as HtmlHandler;
-    //   const htmlRange = htmlHandler.getHtmlElementRange(document, position, word);
-    //   if (htmlRange) {
-    //     return htmlRange;
-    //   }
-    // }
+    if (handler.isHtmlLike()) {
+      const htmlHandler = handler as HtmlHandler;
+      const htmlRange = htmlHandler.getHtmlElementRange(document, position, word);
+      if (htmlRange) {
+        return htmlRange;
+      }
+    }
 
     // Original priority order for other languages
     return this.getStandardElementRange(document, position, word, handler, languageId);
@@ -119,6 +119,7 @@ export class ElementDetector {
   ): vscode.Range | null {
 
     console.log("getTypescriptElementRange")
+
     // Special handling for TSX (check for JSX elements first)
     if ((languageId === 'tsx' || languageId === 'typescriptreact') && handler.getJsxElementRange) {
       console.log("IS TSX")
@@ -129,31 +130,22 @@ export class ElementDetector {
       }
     }
 
-    // Priority order for TypeScript/TSX - most specific first:
-    // 1. Variables
-    // 2. Object properties (inside object literals)
-    // 3. Functions (standalone functions)
-    // 4. Multiline strings
-    // 5. Class members (methods, properties inside classes)
-
-
-
-    // 6. Classes (only if not inside a class member)
-
-    const variableRange = handler.getVariableRange(document, position, word);
-    if (variableRange) {
-      return variableRange;
-    }
+    // Priority order for TypeScript/TSX - check in order of specificity:
+    // 1. Functions (including methods and arrow functions)
+    // 2. Variables (including const, let, var)
+    // 3. Object properties/keys
+    // 4. Class members (only if not caught by function check)
+    // 5. Multiline strings
+    // 6. Classes (only if not inside a more specific element)
 
     const functionRange = handler.getFunctionRange(document, position, word);
     if (functionRange) {
       return functionRange;
     }
 
-
-    const multilineStringRange = handler.getMultilineStringRange(document, position, word);
-    if (multilineStringRange) {
-      return multilineStringRange;
+    const variableRange = handler.getVariableRange(document, position, word);
+    if (variableRange) {
+      return variableRange;
     }
 
     const objectKeyRange = handler.getObjectKeyRange(document, position, word);
@@ -166,7 +158,11 @@ export class ElementDetector {
       return classMemberRange;
     }
 
-    // Only check for classes last, when we're not inside a more specific element
+    const multilineStringRange = handler.getMultilineStringRange(document, position, word);
+    if (multilineStringRange) {
+      return multilineStringRange;
+    }
+
     const classRange = handler.getClassRange(document, position, word);
     if (classRange) {
       return classRange;
