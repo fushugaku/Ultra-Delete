@@ -1,8 +1,8 @@
+// elementDetector.ts
 import * as vscode from 'vscode';
 import { LanguageHandler } from '../languages/base/baseLanguage';
 import { JavaScriptHandler } from '../languages/javascript';
 import { TypeScriptHandler } from '../languages/typescript';
-import { TSXHandler } from '../languages/tsx';
 import { HtmlHandler } from '../languages/html';
 import { JsonHandler } from '../languages/json';
 import { PythonHandler } from '../languages/python';
@@ -19,22 +19,19 @@ export class ElementDetector {
     this.initializeHandlers();
   }
 
-
-  // elementDetector.ts - Update the getElementRange method:
-
   getElementRange(
     document: vscode.TextDocument,
     position: vscode.Position,
     languageId: string
   ): vscode.Range | null {
-
     const wordRange = document.getWordRangeAtPosition(position);
-
-    // Get the word at cursor position
     const word = wordRange ? document.getText(wordRange) : '';
+
+    console.log(`ElementDetector: Processing ${languageId} file, word: "${word}"`);
 
     const handler = this.handlers.get(languageId);
     if (!handler) {
+      console.log(`No handler found for language: ${languageId}`);
       return null;
     }
 
@@ -44,84 +41,103 @@ export class ElementDetector {
       return jsonHandler.getJsonPropertyRange(document, position, word);
     }
 
-    // For TypeScript and TSX, use the improved detection
-    if (languageId === 'typescript' || languageId === 'tsx' || languageId === 'typescriptreact') {
-      return this.getTypescriptElementRange(document, position, word, handler, languageId);
+    // For TypeScript, TSX, JavaScript, and JSX files - all use the TypeScript handler
+    if (['typescript', 'tsx', 'typescriptreact', 'javascript', 'jsx', 'javascriptreact'].includes(languageId)) {
+      console.log('Using TypeScript handler for code detection');
+      return this.getTypescriptElementRange(document, position, word, handler as TypeScriptHandler, languageId);
     }
 
     return this.getStandardElementRange(document, position, word, handler, languageId);
   }
 
-
   private getTypescriptElementRange(
     document: vscode.TextDocument,
     position: vscode.Position,
     word: string,
-    handler: LanguageHandler,
+    handler: TypeScriptHandler,
     languageId: string
   ): vscode.Range | null {
+    console.log(`getTypescriptElementRange: word="${word}", languageId="${languageId}"`);
+    console.log(`Handler type: ${handler.constructor.name}`);
+    console.log(`Handler has getObjectKeyRange: ${typeof handler.getObjectKeyRange}`);
 
-    console.log("getTypescriptElementRange", "word:", word);
-
-    // Special handling for TSX (check for JSX elements first)
-    // if ((languageId === 'tsx' || languageId === 'typescriptreact') && handler.getJsxElementRange) {
-    //   const jsxRange = handler.getJsxElementRange(document, position, word);
-    //   if (jsxRange) {
-    //     return jsxRange;
-    //   }
-    // }
-
-    // Check for conditional blocks (if/else keywords)
+    // Check for conditional blocks (if/else keywords) first
     if (['if', 'else'].includes(word) && handler.getConditionalBlockRange) {
+      console.log('Checking conditional blocks');
       const conditionalRange = handler.getConditionalBlockRange(document, position, word);
       if (conditionalRange) {
+        console.log('Found conditional block');
         return conditionalRange;
       }
     }
 
     // Check for class members (including access modifiers)
+    console.log('Checking class members');
+    console.log('About to call handler.getClassMemberRange');
     const classMemberRange = handler.getClassMemberRange(document, position, word);
+    console.log('Called handler.getClassMemberRange, result:', classMemberRange);
     if (classMemberRange) {
+      console.log('Found class member');
       return classMemberRange;
     }
 
-    // Continue with normal priority order
+    // Check for functions
+    console.log('Checking functions');
+    console.log('About to call handler.getFunctionRange');
     const functionRange = handler.getFunctionRange(document, position, word);
+    console.log('Called handler.getFunctionRange, result:', functionRange);
     if (functionRange) {
+      console.log('Found function');
       return functionRange;
     }
 
+    // Check for variables
+    console.log('Checking variables');
+    console.log('About to call handler.getVariableRange');
     const variableRange = handler.getVariableRange(document, position, word);
+    console.log('Called handler.getVariableRange, result:', variableRange);
     if (variableRange) {
+      console.log('Found variable');
       return variableRange;
     }
 
+    // Check for object keys/properties
+    console.log('Checking object keys');
+    console.log('About to call handler.getObjectKeyRange');
     const objectKeyRange = handler.getObjectKeyRange(document, position, word);
+    console.log('Called handler.getObjectKeyRange, result:', objectKeyRange);
     if (objectKeyRange) {
+      console.log('Found object key');
       return objectKeyRange;
     }
 
+    // Check for multiline strings
+    console.log('Checking multiline strings');
     const multilineStringRange = handler.getMultilineStringRange(document, position, word);
     if (multilineStringRange) {
+      console.log('Found multiline string');
       return multilineStringRange;
     }
 
+    // Check for classes
+    console.log('Checking classes');
     const classRange = handler.getClassRange(document, position, word);
     if (classRange) {
+      console.log('Found class');
       return classRange;
     }
 
+    console.log('No element found in TypeScript handler');
     return null;
   }
 
   private initializeHandlers() {
-
-
-    // TypeScript Handler (AST-based) - Handle both TS and TSX
+    // TypeScript Handler (AST-based) - Handle all JS/TS variants including JSX/TSX
     const tsHandler = new TypeScriptHandler();
-    ['javascript', 'jsx', 'javascriptreact', 'typescript', 'tsx', 'typescriptreact'].forEach(id => this.handlers.set(id, tsHandler));
-
-    // TSX Handler (AST-based with JSX support) - This should handle TSX
+    ['javascript', 'jsx', 'javascriptreact', 'typescript', 'tsx', 'typescriptreact'].forEach(id => {
+      this.handlers.set(id, tsHandler);
+      console.log(`Registered TypeScript handler for: ${id}`);
+    });
 
     // HTML Handler
     const htmlHandler = new HtmlHandler();
@@ -155,7 +171,6 @@ export class ElementDetector {
     const rustHandler = new RustHandler();
     rustHandler.languageIds.forEach(id => this.handlers.set(id, rustHandler));
   }
-
 
   private getStandardElementRange(
     document: vscode.TextDocument,

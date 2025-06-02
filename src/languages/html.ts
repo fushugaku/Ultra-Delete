@@ -3,7 +3,7 @@ import { BaseLanguageHandler, ElementPattern, MultilineStringPattern, ElementTyp
 import { escapeRegExp } from '../utils/helpers';
 
 export class HtmlHandler extends BaseLanguageHandler {
-  languageIds = ['html', 'xml', 'jsx', 'tsx', 'javascriptreact', 'typescriptreact', 'vue', 'svelte'];
+  languageIds = ['html', 'xml', 'jsx', 'vue', 'svelte'];
 
   getClassPatterns(): ElementPattern[] {
     return [];
