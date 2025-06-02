@@ -24,12 +24,16 @@ export interface MultilineStringPattern {
 export interface LanguageHandler {
   languageIds: string[];
 
+  getConditionalBlockRange?(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null;
   getClassRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null;
   getFunctionRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null;
   getVariableRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null;
   getObjectKeyRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null;
   getClassMemberRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null;
   getMultilineStringRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null;
+
+  getNestedObjectPropertyRange?(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null;
+
 
   // Optional method for JSX element range
   getJsxElementRange?(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null;
@@ -73,5 +77,14 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
 
   isHtmlLike(): boolean {
     return false;
+  }
+}
+
+
+
+const test = {
+  hello: "world",
+  rest: {
+    test: "best"
   }
 }

@@ -65,50 +65,8 @@ export class ElementDetector {
     rustHandler.languageIds.forEach(id => this.handlers.set(id, rustHandler));
   }
 
-  getElementRange(
-    document: vscode.TextDocument,
-    position: vscode.Position,
-    languageId: string
-  ): vscode.Range | null {
 
-
-    const wordRange = document.getWordRangeAtPosition(position);
-
-    if (!wordRange) {
-      return null;
-    }
-
-    const word = document.getText(wordRange);
-    const handler = this.handlers.get(languageId);
-
-    if (!handler) {
-      return null;
-    }
-
-    // Special handling for JSON
-    if (languageId === 'json' || languageId === 'jsonc') {
-      const jsonHandler = handler as JsonHandler;
-      return jsonHandler.getJsonPropertyRange(document, position, word);
-    }
-
-    console.log
-
-    // For TypeScript and TSX, use a different priority order that favors granular elements
-    if (languageId === 'typescript' || languageId === 'tsx' || languageId === 'typescriptreact') {
-      return this.getTypescriptElementRange(document, position, word, handler, languageId);
-    }
-
-    if (handler.isHtmlLike()) {
-      const htmlHandler = handler as HtmlHandler;
-      const htmlRange = htmlHandler.getHtmlElementRange(document, position, word);
-      if (htmlRange) {
-        return htmlRange;
-      }
-    }
-
-    // Original priority order for other languages
-    return this.getStandardElementRange(document, position, word, handler, languageId);
-  }
+  // elementDetector.ts - Update the getTypescriptElementRange method:
 
   private getTypescriptElementRange(
     document: vscode.TextDocument,
@@ -118,26 +76,39 @@ export class ElementDetector {
     languageId: string
   ): vscode.Range | null {
 
-    console.log("getTypescriptElementRange")
+    console.log("getTypescriptElementRange", "word:", word);
 
     // Special handling for TSX (check for JSX elements first)
     if ((languageId === 'tsx' || languageId === 'typescriptreact') && handler.getJsxElementRange) {
-      console.log("IS TSX")
       const jsxRange = handler.getJsxElementRange(document, position, word);
       if (jsxRange) {
-        console.log("RANGE", jsxRange)
         return jsxRange;
       }
     }
 
-    // Priority order for TypeScript/TSX - check in order of specificity:
-    // 1. Functions (including methods and arrow functions)
-    // 2. Variables (including const, let, var)
-    // 3. Object properties/keys
-    // 4. Class members (only if not caught by function check)
-    // 5. Multiline strings
-    // 6. Classes (only if not inside a more specific element)
+    // Only check for conditional blocks if cursor is on conditional keywords
+    if (['if', 'else'].includes(word) && handler.getConditionalBlockRange) {
+      const conditionalRange = handler.getConditionalBlockRange(document, position, word);
+      if (conditionalRange) {
+        return conditionalRange;
+      }
+    }
 
+    // Check for nested object properties first (high priority for object keys)
+    if (handler.getNestedObjectPropertyRange) {
+      const nestedObjectRange = handler.getNestedObjectPropertyRange(document, position, word);
+      if (nestedObjectRange) {
+        return nestedObjectRange;
+      }
+    }
+
+    // Check for object properties (fallback)
+    const objectKeyRange = handler.getObjectKeyRange(document, position, word);
+    if (objectKeyRange) {
+      return objectKeyRange;
+    }
+
+    // Continue with normal priority order
     const functionRange = handler.getFunctionRange(document, position, word);
     if (functionRange) {
       return functionRange;
@@ -146,11 +117,6 @@ export class ElementDetector {
     const variableRange = handler.getVariableRange(document, position, word);
     if (variableRange) {
       return variableRange;
-    }
-
-    const objectKeyRange = handler.getObjectKeyRange(document, position, word);
-    if (objectKeyRange) {
-      return objectKeyRange;
     }
 
     const classMemberRange = handler.getClassMemberRange(document, position, word);
@@ -170,6 +136,44 @@ export class ElementDetector {
 
     return null;
   }
+
+  // elementDetector.ts - Update the getElementRange method:
+
+  getElementRange(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    languageId: string
+  ): vscode.Range | null {
+
+    const wordRange = document.getWordRangeAtPosition(position);
+
+    // Get the word at cursor position
+    const word = wordRange ? document.getText(wordRange) : '';
+
+    const handler = this.handlers.get(languageId);
+    if (!handler) {
+      return null;
+    }
+
+    // Special handling for JSON
+    if (languageId === 'json' || languageId === 'jsonc') {
+      const jsonHandler = handler as JsonHandler;
+      return jsonHandler.getJsonPropertyRange(document, position, word);
+    }
+
+    // For TypeScript and TSX, use the improved detection
+    if (languageId === 'typescript' || languageId === 'tsx' || languageId === 'typescriptreact') {
+      return this.getTypescriptElementRange(document, position, word, handler, languageId);
+    }
+
+    return this.getStandardElementRange(document, position, word, handler, languageId);
+  }
+
+  // Update getTypescriptElementRange to only check conditionals for specific keywords:
+
+
+
+
 
   private getStandardElementRange(
     document: vscode.TextDocument,
