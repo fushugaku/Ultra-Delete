@@ -9,17 +9,11 @@ import { BaseLanguageHandler, ElementType } from './base/baseLanguage';
 export class TypeScriptHandler extends BaseLanguageHandler {
   languageIds = ['typescript', 'tsx', 'typescriptreact', 'javascript', 'jsx', 'javascriptreact'];
 
-  constructor() {
-    super();
-    console.log('*** TypeScriptHandler constructor called ***');
-  }
-
   // ========================================
-  // REQUIRED ABSTRACT METHOD IMPLEMENTATIONS
+  // PUBLIC API METHODS
   // ========================================
 
   getClassRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
-    console.log(`*** getClassRange ENTRY - word: "${word}" ***`);
     return this.getElementRangeUsingAST(document, position, [
       ts.SyntaxKind.ClassDeclaration,
       ts.SyntaxKind.InterfaceDeclaration,
@@ -31,17 +25,15 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   getFunctionRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
-    console.log(`*** getFunctionRange ENTRY - word: "${word}" ***`);
     return this.getElementRangeUsingAST(document, position, [
       ts.SyntaxKind.FunctionDeclaration,
       ts.SyntaxKind.ArrowFunction,
       ts.SyntaxKind.FunctionExpression,
-      ts.SyntaxKind.MethodDeclaration
+      ts.SyntaxKind.MethodDeclaration // Include methods in function detection
     ]);
   }
 
   getVariableRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
-    console.log(`*** getVariableRange ENTRY - word: "${word}" ***`);
     return this.getElementRangeUsingAST(document, position, [
       ts.SyntaxKind.VariableStatement,
       ts.SyntaxKind.VariableDeclaration
@@ -49,18 +41,14 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   getObjectKeyRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
-    console.log(`*** getObjectKeyRange ENTRY - word: "${word}" ***`);
     return this.getElementRangeUsingAST(document, position, [
       ts.SyntaxKind.PropertyAssignment,
       ts.SyntaxKind.ShorthandPropertyAssignment,
-      ts.SyntaxKind.PropertySignature,
-      ts.SyntaxKind.MethodSignature
+      ts.SyntaxKind.PropertySignature
     ]);
   }
 
   getClassMemberRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
-    console.log(`*** getClassMemberRange ENTRY - word: "${word}" ***`);
-
     // First try the standard AST-based detection
     const standardRange = this.getElementRangeUsingAST(document, position, [
       ts.SyntaxKind.MethodDeclaration,
@@ -71,63 +59,18 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     ]);
 
     if (standardRange) {
-      console.log(`Found class member via standard range`);
       return standardRange;
     }
 
     // If standard detection failed, check if cursor is on an access modifier
     if (this.isAccessModifier(word)) {
-      console.log(`Checking access modifier: ${word}`);
       return this.getClassMemberRangeFromModifier(document, position, word);
     }
 
-    console.log(`No class member found for word: "${word}"`);
     return null;
   }
 
-  getMultilineStringRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
-    console.log(`*** getMultilineStringRange ENTRY - word: "${word}" ***`);
-    return this.getElementRangeUsingAST(document, position, [
-      ts.SyntaxKind.TemplateExpression,
-      ts.SyntaxKind.NoSubstitutionTemplateLiteral,
-      ts.SyntaxKind.StringLiteral
-    ]);
-  }
-
-  // ========================================
-  // REQUIRED PATTERN METHODS (return empty arrays since we use AST)
-  // ========================================
-
-  getClassPatterns(): any[] {
-    return [];
-  }
-
-  getFunctionPatterns(): any[] {
-    return [];
-  }
-
-  getVariablePatterns(): any[] {
-    return [];
-  }
-
-  getObjectKeyPatterns(): any[] {
-    return [];
-  }
-
-  getClassMemberPatterns(): any[] {
-    return [];
-  }
-
-  getMultilineStringPatterns(): any[] {
-    return [];
-  }
-
-  // ========================================
-  // OPTIONAL METHODS
-  // ========================================
-
   getConditionalBlockRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
-    console.log(`*** getConditionalBlockRange ENTRY - word: "${word}" ***`);
     try {
       const sourceFile = this.createSourceFile(document);
       const offset = document.offsetAt(position);
@@ -135,7 +78,6 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       // Find the if statement that contains this position
       const ifStatement = this.findIfStatementAtPosition(sourceFile, offset);
       if (!ifStatement) {
-        console.log(`No if statement found`);
         return null;
       }
 
@@ -145,6 +87,14 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       console.error('Error parsing conditional block:', error);
       return null;
     }
+  }
+
+  getMultilineStringRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
+    return this.getElementRangeUsingAST(document, position, [
+      ts.SyntaxKind.TemplateExpression,
+      ts.SyntaxKind.NoSubstitutionTemplateLiteral,
+      ts.SyntaxKind.StringLiteral
+    ]);
   }
 
   // ========================================
@@ -159,51 +109,30 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     position: vscode.Position,
     targetKinds: ts.SyntaxKind[]
   ): vscode.Range | null {
-    console.log(`getElementRangeUsingAST called with kinds: ${targetKinds.map(k => ts.SyntaxKind[k]).join(', ')}`);
-
     try {
       console.log(`Parsing ${document.languageId} file: ${document.fileName}`);
       const sourceFile = this.createSourceFile(document);
       console.log(`Created source file successfully`);
 
       const offset = document.offsetAt(position);
-      console.log(`Looking for kinds at offset ${offset}: ${targetKinds.map(k => ts.SyntaxKind[k]).join(', ')}`);
-
-      // First, let's debug what node we're actually on
-      const nodeAtPosition = this.findNodeAtPosition(sourceFile, offset);
-      if (nodeAtPosition) {
-        console.log(`Node at position: ${ts.SyntaxKind[nodeAtPosition.kind]} - "${nodeAtPosition.getText().substring(0, 50)}..."`);
-        console.log(`Node parent: ${nodeAtPosition.parent ? ts.SyntaxKind[nodeAtPosition.parent.kind] : 'none'}`);
-      } else {
-        console.log(`No node found at position ${offset}`);
-      }
+      console.log(`Looking for kinds: ${targetKinds.map(k => ts.SyntaxKind[k]).join(', ')}`);
 
       // Find the node that directly contains the cursor position
       const node = this.findDirectNodeAtPosition(sourceFile, offset, targetKinds);
       if (!node) {
-        console.log('No matching node found in direct search');
-        // Let's try a more relaxed search
-        const relaxedNode = this.findRelaxedNodeAtPosition(sourceFile, offset, targetKinds);
-        if (relaxedNode) {
-          console.log(`Found relaxed match: ${ts.SyntaxKind[relaxedNode.kind]}`);
-          return this.getNodeRange(document, relaxedNode);
-        }
-        console.log('No relaxed match found either');
+        console.log('No matching node found');
         return null;
       }
 
       console.log(`Found node of kind: ${ts.SyntaxKind[node.kind]}`);
       return this.getNodeRange(document, node);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error parsing TypeScript/TSX:', error);
-      console.error('Error stack:', error?.stack);
       return null;
     }
   }
 
   private createSourceFile(document: vscode.TextDocument): ts.SourceFile {
-    console.log(`createSourceFile called for ${document.languageId}`);
-
     // Determine script kind based on file extension or language ID
     let scriptKind = ts.ScriptKind.TS;
 
@@ -223,103 +152,43 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       console.log('Using TS script kind for parsing');
     }
 
-    try {
-      const sourceFile = ts.createSourceFile(
-        document.fileName,
-        document.getText(),
-        ts.ScriptTarget.Latest,
-        true,
-        scriptKind
-      );
-      console.log(`Source file created successfully, has ${sourceFile.statements.length} statements`);
-      return sourceFile;
-    } catch (error) {
-      console.error('Error creating source file:', error);
-      throw error;
-    }
+    return ts.createSourceFile(
+      document.fileName,
+      document.getText(),
+      ts.ScriptTarget.Latest,
+      true,
+      scriptKind
+    );
   }
 
   // ========================================
   // NODE FINDING AND VALIDATION
   // ========================================
 
-  private findNodeAtPosition(node: ts.Node, position: number): ts.Node | null {
-    console.log(`findNodeAtPosition: checking node ${ts.SyntaxKind[node.kind]} at position ${position}`);
-
-    // Simple function to find what node we're actually on
-    if (position >= node.getStart() && position <= node.getEnd()) {
-      console.log(`Position ${position} is within node ${ts.SyntaxKind[node.kind]} (${node.getStart()}-${node.getEnd()})`);
-
-      // Check children first
-      let childResult: ts.Node | null = null;
-      ts.forEachChild(node, (child) => {
-        if (!childResult) {
-          childResult = this.findNodeAtPosition(child, position);
-        }
-      });
-      return childResult || node;
-    }
-    return null;
-  }
-
   private findDirectNodeAtPosition(
     node: ts.Node,
     position: number,
     targetKinds: ts.SyntaxKind[]
   ): ts.Node | null {
-    console.log(`findDirectNodeAtPosition: looking for ${targetKinds.map(k => ts.SyntaxKind[k]).join(', ')}`);
-
     // Find the deepest node that contains the position
     const containingNode = this.findDeepestContainingNode(node, position);
     if (!containingNode) {
-      console.log('No containing node found');
       return null;
     }
-
-    console.log(`Deepest containing node: ${ts.SyntaxKind[containingNode.kind]}`);
 
     // Walk up the tree to find the first node that matches our target kinds
     let current: ts.Node | undefined = containingNode;
     while (current) {
-      console.log(`Checking node: ${ts.SyntaxKind[current.kind]}`);
       if (targetKinds.includes(current.kind)) {
-        console.log(`Found matching kind: ${ts.SyntaxKind[current.kind]}`);
         // Additional validation to ensure we're at the right scope level
         if (this.isValidScopeForPosition(current, position)) {
-          console.log(`Valid scope found: ${ts.SyntaxKind[current.kind]}`);
           return current;
-        } else {
-          console.log(`Invalid scope for: ${ts.SyntaxKind[current.kind]}`);
         }
       }
       current = current.parent;
     }
 
-    console.log('No matching node found in tree walk');
     return null;
-  }
-
-  private findRelaxedNodeAtPosition(
-    node: ts.Node,
-    position: number,
-    targetKinds: ts.SyntaxKind[]
-  ): ts.Node | null {
-    console.log(`findRelaxedNodeAtPosition: checking ${ts.SyntaxKind[node.kind]}`);
-
-    // More relaxed search - find any matching node that contains the position
-    if (targetKinds.includes(node.kind) && position >= node.getStart() && position <= node.getEnd()) {
-      console.log(`Relaxed match found: ${ts.SyntaxKind[node.kind]}`);
-      return node;
-    }
-
-    let result: ts.Node | null = null;
-    ts.forEachChild(node, (child) => {
-      if (!result) {
-        result = this.findRelaxedNodeAtPosition(child, position, targetKinds);
-      }
-    });
-
-    return result;
   }
 
   private findDeepestContainingNode(node: ts.Node, position: number): ts.Node | null {
@@ -342,47 +211,23 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   private isValidScopeForPosition(node: ts.Node, position: number): boolean {
-    console.log(`Validating scope for ${ts.SyntaxKind[node.kind]} at position ${position}`);
-
     switch (node.kind) {
       case ts.SyntaxKind.FunctionDeclaration:
       case ts.SyntaxKind.ArrowFunction:
       case ts.SyntaxKind.FunctionExpression:
-        const funcValid = this.isCursorOnFunctionDeclaration(node, position);
-        console.log(`Function validation result: ${funcValid}`);
-        return funcValid;
+        return this.isCursorOnFunctionDeclaration(node, position);
 
       case ts.SyntaxKind.MethodDeclaration:
-        const methodValid = this.isCursorOnMethodDeclaration(node, position);
-        console.log(`Method validation result: ${methodValid}`);
-        return methodValid;
+        return this.isCursorOnMethodDeclaration(node, position);
 
       case ts.SyntaxKind.VariableDeclaration:
-        const varValid = this.isCursorOnVariableName(node, position);
-        console.log(`Variable declaration validation: ${varValid}`);
-        return varValid;
-
-      case ts.SyntaxKind.VariableStatement:
-        // For variable statements, check if cursor is on any of the declarations
-        if (ts.isVariableStatement(node)) {
-          for (const declaration of node.declarationList.declarations) {
-            if (this.isCursorOnVariableName(declaration, position)) {
-              console.log(`Variable statement validation: true`);
-              return true;
-            }
-          }
-        }
-        console.log(`Variable statement validation: false`);
-        return false;
+        return this.isCursorOnVariableName(node, position);
 
       case ts.SyntaxKind.PropertyAssignment:
       case ts.SyntaxKind.ShorthandPropertyAssignment:
-        const propValid = this.isCursorOnPropertyKey(node, position);
-        console.log(`Property validation result: ${propValid}`);
-        return propValid;
+        return this.isCursorOnPropertyKey(node, position);
 
       default:
-        console.log(`Default validation: true for ${ts.SyntaxKind[node.kind]}`);
         return true;
     }
   }
@@ -396,18 +241,14 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       // Check if cursor is on the function keyword or name
       const functionKeywordStart = node.getStart();
       const nameEnd = node.name ? node.name.getEnd() : node.getStart() + 8; // "function".length
-      const result = position >= functionKeywordStart && position <= nameEnd;
-      console.log(`Function declaration check: pos=${position}, start=${functionKeywordStart}, nameEnd=${nameEnd}, result=${result}`);
-      return result;
+      return position >= functionKeywordStart && position <= nameEnd;
     }
 
     if (ts.isArrowFunction(node)) {
       // For arrow functions, check if cursor is on parameters or before =>
       const arrowToken = node.getChildren().find(child => child.kind === ts.SyntaxKind.EqualsGreaterThanToken);
       if (arrowToken) {
-        const result = position <= arrowToken.getStart();
-        console.log(`Arrow function check: pos=${position}, arrowStart=${arrowToken.getStart()}, result=${result}`);
-        return result;
+        return position <= arrowToken.getStart();
       }
     }
 
@@ -426,9 +267,7 @@ export class TypeScriptHandler extends BaseLanguageHandler {
         const openBrace = node.getChildren().find(child => child.kind === ts.SyntaxKind.OpenBraceToken);
         const beforeBody = openBrace ? openBrace.getStart() : nameEnd;
 
-        const result = position >= nameStart && position <= beforeBody;
-        console.log(`Method declaration check: pos=${position}, nameStart=${nameStart}, beforeBody=${beforeBody}, result=${result}`);
-        return result;
+        return position >= nameStart && position <= beforeBody;
       }
     }
     return true;
@@ -440,9 +279,7 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       if (name) {
         const nameStart = name.getStart();
         const nameEnd = name.getEnd();
-        const isOnName = position >= nameStart && position <= nameEnd;
-        console.log(`Variable name "${name.getText()}" range: ${nameStart}-${nameEnd}, position: ${position}, isOnName: ${isOnName}`);
-        return isOnName;
+        return position >= nameStart && position <= nameEnd;
       }
     }
     return true;
@@ -454,25 +291,26 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       if (name) {
         const nameStart = name.getStart();
         const nameEnd = name.getEnd();
-        const result = position >= nameStart && position <= nameEnd;
-        console.log(`Property key "${name.getText()}" range: ${nameStart}-${nameEnd}, position: ${position}, result=${result}`);
-        return result;
+        return position >= nameStart && position <= nameEnd;
       }
     }
     return true;
   }
 
   // ========================================
-  // REMAINING HELPER METHODS (keeping existing implementation)
+  // CONDITIONAL BLOCK HANDLING
   // ========================================
 
   private findIfStatementAtPosition(node: ts.Node, position: number): ts.IfStatement | null {
+    // Check if this node is an if statement and contains the position
     if (ts.isIfStatement(node) && position >= node.getStart() && position <= node.getEnd()) {
+      // Check if cursor is specifically on a keyword in this if statement
       if (this.isCursorOnConditionalKeyword(node, position)) {
         return node;
       }
     }
 
+    // Recursively search children
     let result: ts.IfStatement | null = null;
     ts.forEachChild(node, (child) => {
       if (!result) {
@@ -491,13 +329,15 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     const sourceFile = node.getSourceFile();
     const text = sourceFile.text;
 
+    // Check if cursor is on the main "if" keyword
     const ifKeywordStart = node.getStart();
-    const ifKeywordEnd = ifKeywordStart + 2;
+    const ifKeywordEnd = ifKeywordStart + 2; // "if".length
 
     if (this.isCursorOnKeywordOnly(position, ifKeywordStart, ifKeywordEnd, text)) {
       return true;
     }
 
+    // Check for else/else if keywords in the chain
     return this.isCursorOnElseKeywords(node, position, text);
   }
 
@@ -508,15 +348,17 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       const elseKeywordPos = this.findElseKeywordPosition(current, sourceText);
       if (elseKeywordPos === -1) break;
 
-      const elseKeywordEnd = elseKeywordPos + 4;
+      const elseKeywordEnd = elseKeywordPos + 4; // "else".length
 
+      // Check if cursor is on "else" keyword
       if (position >= elseKeywordPos && position <= elseKeywordEnd) {
         return true;
       }
 
+      // If else statement is another if statement, check the "if" part of "else if"
       if (ts.isIfStatement(current.elseStatement)) {
         const elseIfStart = current.elseStatement.getStart();
-        const elseIfEnd = elseIfStart + 2;
+        const elseIfEnd = elseIfStart + 2; // "if".length after "else "
 
         if (position >= elseIfStart && position <= elseIfEnd) {
           return true;
@@ -538,17 +380,20 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   ): vscode.Range | null {
     const sourceText = ifStatement.getSourceFile().text;
 
+    // Case 1: Cursor on main "if" keyword - cut entire if/else if/else chain
     const ifKeywordStart = ifStatement.getStart();
-    const ifKeywordEnd = ifKeywordStart + 2;
+    const ifKeywordEnd = ifKeywordStart + 2; // "if".length
 
     if (position >= ifKeywordStart && position <= ifKeywordEnd) {
       return this.getEntireIfChainRange(document, ifStatement);
     }
 
+    // Case 2: Cursor on "else if" or "else" - find which one and cut from there
     return this.getElseChainRange(document, ifStatement, position, sourceText);
   }
 
   private getEntireIfChainRange(document: vscode.TextDocument, ifStatement: ts.IfStatement): vscode.Range {
+    // Find the end of the entire if/else chain
     let endNode: ts.Node = ifStatement;
     let current = ifStatement;
 
@@ -579,12 +424,16 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       const elseKeywordPos = this.findElseKeywordPosition(current, sourceText);
       if (elseKeywordPos === -1) break;
 
-      const elseKeywordEnd = elseKeywordPos + 4;
+      const elseKeywordEnd = elseKeywordPos + 4; // "else".length
 
+      // Check if cursor is on "else" keyword
       if (position >= elseKeywordPos && position <= elseKeywordEnd) {
+        // If the else statement is another if statement, this is "else if"
         if (ts.isIfStatement(current.elseStatement)) {
+          // Cursor on "else if" - cut from this else if to the end of the chain
           return this.getElseIfChainRange(document, current.elseStatement);
         } else {
+          // Cursor on final "else" - cut just the else block
           return new vscode.Range(
             document.positionAt(elseKeywordPos),
             document.positionAt(current.elseStatement.getEnd())
@@ -592,11 +441,13 @@ export class TypeScriptHandler extends BaseLanguageHandler {
         }
       }
 
+      // Check if cursor is on the "if" part of "else if"
       if (ts.isIfStatement(current.elseStatement)) {
         const elseIfStart = current.elseStatement.getStart();
-        const elseIfEnd = elseIfStart + 2;
+        const elseIfEnd = elseIfStart + 2; // "if".length
 
         if (position >= elseIfStart && position <= elseIfEnd) {
+          // Cursor on "else if" - cut from this else if to the end
           return this.getElseIfChainRange(document, current.elseStatement);
         }
 
@@ -610,6 +461,7 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   private getElseIfChainRange(document: vscode.TextDocument, elseIfStatement: ts.IfStatement): vscode.Range {
+    // Find the end of the chain starting from this else if
     let endNode: ts.Node = elseIfStatement;
     let current = elseIfStatement;
 
@@ -622,6 +474,7 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       }
     }
 
+    // Start from the "else" keyword that precedes this else if
     const parent = elseIfStatement.parent;
     if (ts.isIfStatement(parent)) {
       const sourceText = elseIfStatement.getSourceFile().text;
@@ -634,11 +487,16 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       }
     }
 
+    // Fallback: just the else if statement itself
     return new vscode.Range(
       document.positionAt(elseIfStatement.getStart()),
       document.positionAt(endNode.getEnd())
     );
   }
+
+  // ========================================
+  // CLASS MEMBER HANDLING
+  // ========================================
 
   private isAccessModifier(word: string): boolean {
     const accessModifiers = ['private', 'public', 'protected', 'readonly', 'static', 'abstract', 'override'];
@@ -654,6 +512,7 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       const sourceFile = this.createSourceFile(document);
       const offset = document.offsetAt(position);
 
+      // Find the class member that has this modifier
       const classMember = this.findClassMemberWithModifierAtPosition(sourceFile, offset, word);
       if (!classMember) {
         return null;
@@ -671,6 +530,7 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     position: number,
     modifierWord: string
   ): ts.Node | null {
+    // Check if this node is a class member with the modifier at the position
     if (this.isClassMemberNode(node)) {
       const modifierRange = this.findModifierInNode(node, position, modifierWord);
       if (modifierRange) {
@@ -678,6 +538,7 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       }
     }
 
+    // Recursively search children
     let result: ts.Node | null = null;
     ts.forEachChild(node, (child) => {
       if (!result) {
@@ -697,16 +558,19 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   private findModifierInNode(node: ts.Node, position: number, modifierWord: string): boolean {
+    // Get all modifiers for this node
     const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined;
 
     if (!modifiers) {
       return false;
     }
 
+    // Check each modifier
     for (const modifier of modifiers) {
       const modifierStart = modifier.getStart();
       const modifierEnd = modifier.getEnd();
 
+      // Check if the position is within this modifier and it matches our word
       if (position >= modifierStart && position <= modifierEnd) {
         const modifierText = modifier.getText().trim();
         if (modifierText.toLowerCase() === modifierWord.toLowerCase()) {
@@ -718,14 +582,17 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     return false;
   }
 
-  private getNodeRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
-    console.log(`getNodeRange called for ${ts.SyntaxKind[node.kind]}`);
+  // ========================================
+  // RANGE CALCULATION
+  // ========================================
 
+  private getNodeRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
+    // Get the exact range for the specific node type
     switch (node.kind) {
       case ts.SyntaxKind.VariableDeclaration:
+        // For variable declarations, get the entire statement
         const statement = this.findAncestorOfKind(node, ts.SyntaxKind.VariableStatement);
         if (statement) {
-          console.log(`Found variable statement ancestor`);
           return this.nodeToRange(document, statement);
         }
         break;
@@ -733,7 +600,7 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       case ts.SyntaxKind.PropertyAssignment:
       case ts.SyntaxKind.ShorthandPropertyAssignment:
       case ts.SyntaxKind.PropertySignature:
-        console.log(`Getting property range`);
+        // For object properties, include the entire property with value and trailing comma
         return this.getPropertyRange(document, node);
 
       case ts.SyntaxKind.MethodDeclaration:
@@ -741,17 +608,16 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       case ts.SyntaxKind.GetAccessor:
       case ts.SyntaxKind.SetAccessor:
       case ts.SyntaxKind.Constructor:
-        console.log(`Getting class member range`);
+        // For class members, include only the member itself (not expanding to class)
         return this.getClassMemberNodeRange(document, node);
 
       case ts.SyntaxKind.FunctionDeclaration:
       case ts.SyntaxKind.ArrowFunction:
       case ts.SyntaxKind.FunctionExpression:
-        console.log(`Getting function range`);
+        // For functions, include the entire function
         return this.getFunctionNodeRange(document, node);
 
       default:
-        console.log(`Getting default node range for ${ts.SyntaxKind[node.kind]}`);
         return this.nodeToRange(document, node);
     }
 
@@ -759,8 +625,10 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   private getFunctionNodeRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
+    // For functions, include any leading comments or decorators
     let start = node.getStart();
 
+    // Check for leading trivia (comments, etc.)
     const fullStart = node.getFullStart();
     if (fullStart < start) {
       const leadingTrivia = node.getSourceFile().text.substring(fullStart, start);
@@ -776,9 +644,11 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   private getPropertyRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
+    // For object properties, include the entire property line including trailing comma
     const start = document.positionAt(node.getStart());
     let end = document.positionAt(node.getEnd());
 
+    // Try to include trailing comma if it exists
     const line = document.lineAt(end.line);
     const textAfterNode = line.text.substring(end.character);
     const commaMatch = textAfterNode.match(/^\s*,/);
@@ -790,18 +660,26 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   private getClassMemberNodeRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
+    // For class members, include any decorators and modifiers but don't expand to class level
     return this.nodeToRange(document, node);
   }
 
+  // ========================================
+  // UTILITY METHODS
+  // ========================================
+
   private isCursorOnKeywordOnly(position: number, keywordStart: number, keywordEnd: number, sourceText: string): boolean {
+    // Check if cursor is within the keyword bounds
     if (position < keywordStart || position > keywordEnd) {
       return false;
     }
 
+    // Additional check: make sure we're not inside a string or comment
     const charAtPosition = sourceText[position];
     const charBefore = position > 0 ? sourceText[position - 1] : '';
     const charAfter = position < sourceText.length - 1 ? sourceText[position + 1] : '';
 
+    // Simple heuristic: if surrounded by quotes, we're probably in a string
     if ((charBefore === '"' || charBefore === "'" || charBefore === '`') ||
       (charAfter === '"' || charAfter === "'" || charAfter === '`')) {
       return false;
@@ -815,13 +693,16 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       return -1;
     }
 
+    // Find the end of the if statement's then statement
     const thenStatement = ifStatement.thenStatement;
     const thenEnd = thenStatement.getEnd();
 
+    // Look for "else" keyword after the then statement
     const searchStart = thenEnd;
     const searchEnd = ifStatement.elseStatement.getStart();
     const searchText = sourceText.substring(searchStart, searchEnd);
 
+    // Be more precise with the regex to avoid false matches
     const elseMatch = searchText.match(/^\s*else\b/);
     if (elseMatch && elseMatch.index !== undefined) {
       return searchStart + elseMatch.index + elseMatch[0].indexOf('else');
@@ -844,7 +725,18 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   private nodeToRange(document: vscode.TextDocument, node: ts.Node): vscode.Range {
     const start = document.positionAt(node.getStart());
     const end = document.positionAt(node.getEnd());
-    console.log(`nodeToRange: ${start.line}:${start.character} to ${end.line}:${end.character}`);
     return new vscode.Range(start, end);
   }
+
+  // ========================================
+  // BASE CLASS REQUIREMENTS
+  // ========================================
+
+  // Required methods from base class (simplified implementations)
+  getClassPatterns() { return []; }
+  getFunctionPatterns() { return []; }
+  getVariablePatterns() { return []; }
+  getObjectKeyPatterns() { return []; }
+  getClassMemberPatterns() { return []; }
+  getMultilineStringPatterns() { return []; }
 }

@@ -35,6 +35,8 @@ export class ElementDetector {
       return null;
     }
 
+    console.log(`Handler found: ${handler.constructor.name} for language: ${languageId}`);
+
     // Special handling for JSON
     if (languageId === 'json' || languageId === 'jsonc') {
       const jsonHandler = handler as JsonHandler;
@@ -44,6 +46,13 @@ export class ElementDetector {
     // For TypeScript, TSX, JavaScript, and JSX files - all use the TypeScript handler
     if (['typescript', 'tsx', 'typescriptreact', 'javascript', 'jsx', 'javascriptreact'].includes(languageId)) {
       console.log('Using TypeScript handler for code detection');
+
+      // Verify this is actually a TypeScript handler
+      if (handler.constructor.name !== 'TypeScriptHandler') {
+        console.error(`Expected TypeScriptHandler but got ${handler.constructor.name} for language ${languageId}`);
+        console.log('Available handlers:', Array.from(this.handlers.entries()).map(([key, value]) => `${key}: ${value.constructor.name}`));
+      }
+
       return this.getTypescriptElementRange(document, position, word, handler as TypeScriptHandler, languageId);
     }
 
@@ -59,9 +68,18 @@ export class ElementDetector {
   ): vscode.Range | null {
     console.log(`getTypescriptElementRange: word="${word}", languageId="${languageId}"`);
     console.log(`Handler type: ${handler.constructor.name}`);
-    console.log(`Handler has getObjectKeyRange: ${typeof handler.getObjectKeyRange}`);
 
-    // Check for conditional blocks (if/else keywords) first
+    // For TSX/JSX files, check JSX elements FIRST
+    if (['tsx', 'typescriptreact', 'jsx', 'javascriptreact'].includes(languageId)) {
+      console.log('Checking JSX elements first');
+      const jsxRange = handler.getJsxElementRange!(document, position, word);
+      if (jsxRange) {
+        console.log('Found JSX element');
+        return jsxRange;
+      }
+    }
+
+    // Check for conditional blocks (if/else keywords)
     if (['if', 'else'].includes(word) && handler.getConditionalBlockRange) {
       console.log('Checking conditional blocks');
       const conditionalRange = handler.getConditionalBlockRange(document, position, word);
@@ -71,31 +89,18 @@ export class ElementDetector {
       }
     }
 
-    // Check for class members (including access modifiers)
-    console.log('Checking class members');
-    console.log('About to call handler.getClassMemberRange');
-    const classMemberRange = handler.getClassMemberRange(document, position, word);
-    console.log('Called handler.getClassMemberRange, result:', classMemberRange);
-    if (classMemberRange) {
-      console.log('Found class member');
-      return classMemberRange;
-    }
-
-    // Check for functions
-    console.log('Checking functions');
-    console.log('About to call handler.getFunctionRange');
+    // PRIORITIZE FUNCTION CALLS - check functions BEFORE class members
+    // This will catch function calls like onMounted(), watch(), etc.
+    console.log('Checking functions (including calls)');
     const functionRange = handler.getFunctionRange(document, position, word);
-    console.log('Called handler.getFunctionRange, result:', functionRange);
     if (functionRange) {
-      console.log('Found function');
+      console.log('Found function/call');
       return functionRange;
     }
 
     // Check for variables
     console.log('Checking variables');
-    console.log('About to call handler.getVariableRange');
     const variableRange = handler.getVariableRange(document, position, word);
-    console.log('Called handler.getVariableRange, result:', variableRange);
     if (variableRange) {
       console.log('Found variable');
       return variableRange;
@@ -103,12 +108,19 @@ export class ElementDetector {
 
     // Check for object keys/properties
     console.log('Checking object keys');
-    console.log('About to call handler.getObjectKeyRange');
     const objectKeyRange = handler.getObjectKeyRange(document, position, word);
-    console.log('Called handler.getObjectKeyRange, result:', objectKeyRange);
     if (objectKeyRange) {
       console.log('Found object key');
       return objectKeyRange;
+    }
+
+    // Check for class members AFTER function calls
+    // This prevents method declarations from overriding function calls inside them
+    console.log('Checking class members');
+    const classMemberRange = handler.getClassMemberRange(document, position, word);
+    if (classMemberRange) {
+      console.log('Found class member');
+      return classMemberRange;
     }
 
     // Check for multiline strings
@@ -132,16 +144,16 @@ export class ElementDetector {
   }
 
   private initializeHandlers() {
-    // TypeScript Handler (AST-based) - Handle all JS/TS variants including JSX/TSX
-    const tsHandler = new TypeScriptHandler();
-    ['javascript', 'jsx', 'javascriptreact', 'typescript', 'tsx', 'typescriptreact'].forEach(id => {
-      this.handlers.set(id, tsHandler);
-      console.log(`Registered TypeScript handler for: ${id}`);
-    });
+    console.log('Initializing handlers...');
 
-    // HTML Handler
+    // HTML Handler FIRST (so it doesn't overwrite TypeScript handler)
     const htmlHandler = new HtmlHandler();
-    htmlHandler.languageIds.forEach(id => this.handlers.set(id, htmlHandler));
+    console.log('Created HTML handler:', htmlHandler.constructor.name);
+    console.log('HTML handler language IDs:', htmlHandler.languageIds);
+    htmlHandler.languageIds.forEach(id => {
+      console.log(`Setting HTML handler for language: ${id}`);
+      this.handlers.set(id, htmlHandler);
+    });
 
     // JSON Handler
     const jsonHandler = new JsonHandler();
@@ -170,6 +182,25 @@ export class ElementDetector {
     // Rust Handler
     const rustHandler = new RustHandler();
     rustHandler.languageIds.forEach(id => this.handlers.set(id, rustHandler));
+
+    // TypeScript Handler LAST (so it overwrites any conflicts)
+    const tsHandler = new TypeScriptHandler();
+    console.log('Created TypeScript handler:', tsHandler.constructor.name);
+
+    ['javascript', 'jsx', 'javascriptreact', 'typescript', 'tsx', 'typescriptreact'].forEach(id => {
+      console.log(`Setting TypeScript handler for language: ${id}`);
+      this.handlers.set(id, tsHandler);
+
+      // Verify it was set correctly
+      const retrievedHandler = this.handlers.get(id);
+      console.log(`Verified handler for ${id}: ${retrievedHandler?.constructor.name}`);
+    });
+
+    console.log('Handler initialization complete');
+    console.log('Final handler mapping:');
+    Array.from(this.handlers.entries()).forEach(([key, value]) => {
+      console.log(`  ${key}: ${value.constructor.name}`);
+    });
   }
 
   private getStandardElementRange(
