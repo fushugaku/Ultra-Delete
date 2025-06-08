@@ -119,6 +119,1047 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   // ========================================
+  // NEW SCOPE AND MEMBER NAVIGATION METHODS
+  // ========================================
+
+  /**
+   * Get the range of the current function scope (body contents)
+   */
+  getFunctionScopeRange(document: vscode.TextDocument, position: vscode.Position): vscode.Range | null {
+    try {
+      const sourceFile = this.createSourceFile(document);
+      const offset = document.offsetAt(position);
+
+      // Find the function that contains this position
+      const functionNode = this.findContainingFunction(sourceFile, offset);
+      if (!functionNode) {
+        return null;
+      }
+
+      // Get the function body range
+      return this.getFunctionBodyRange(document, functionNode);
+    } catch (error) {
+      console.error('Error getting function scope range:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get all members at the current scope level
+   */
+  getMembersInCurrentScope(document: vscode.TextDocument, position: vscode.Position): Array<{ range: vscode.Range, text: string, name: string }> {
+    try {
+      const sourceFile = this.createSourceFile(document);
+      const offset = document.offsetAt(position);
+
+      console.log(`Getting members in current scope at position ${position.line}:${position.character}`);
+
+      // Find the containing scope (class, object, module, etc.)
+      const scopeNode = this.findContainingScope(sourceFile, offset);
+      if (!scopeNode) {
+        console.log('No scope node found');
+        return [];
+      }
+
+      console.log(`Found scope node of kind: ${ts.SyntaxKind[scopeNode.kind]}`);
+      const members = this.extractMembersFromScope(document, scopeNode);
+      console.log(`Extracted ${members.length} members:`, members.map(m => m.name));
+
+      return members;
+    } catch (error) {
+      console.error('Error getting members in current scope:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Find the next member after the current position
+   */
+  getNextMemberRange(document: vscode.TextDocument, position: vscode.Position): vscode.Range | null {
+    const members = this.getMembersInCurrentScope(document, position);
+    if (members.length === 0) {
+      console.log('No members found for next member navigation');
+      return null;
+    }
+
+    console.log(`Found ${members.length} members, looking for next after position ${position.line}:${position.character}`);
+
+    // Find the first member that starts after the current position
+    const currentOffset = document.offsetAt(position);
+    for (const member of members) {
+      const memberOffset = document.offsetAt(member.range.start);
+      console.log(`Checking member "${member.name}" at offset ${memberOffset} vs current ${currentOffset}`);
+      if (memberOffset > currentOffset) {
+        console.log(`Found next member: ${member.name}`);
+        return member.range;
+      }
+    }
+
+    // If no member found after current position, wrap to the first member
+    console.log(`No member after current position, wrapping to first: ${members[0]?.name}`);
+    return members[0].range;
+  }
+
+  /**
+   * Sort members by their names
+   */
+  sortMembersByName(members: Array<{ range: vscode.Range, text: string, name: string }>, ascending: boolean = true): Array<{ range: vscode.Range, text: string, name: string }> {
+    return members.sort((a, b) => {
+      const comparison = a.name.localeCompare(b.name);
+      return ascending ? comparison : -comparison;
+    });
+  }
+
+  /**
+   * Move a member up in its scope
+   */
+  moveMemberUp(document: vscode.TextDocument, position: vscode.Position): { newPosition: vscode.Position, moved: boolean } | null {
+    return this.moveMember(document, position, 'up');
+  }
+
+  /**
+   * Move a member down in its scope
+   */
+  moveMemberDown(document: vscode.TextDocument, position: vscode.Position): { newPosition: vscode.Position, moved: boolean } | null {
+    return this.moveMember(document, position, 'down');
+  }
+
+  /**
+   * Move a member up or down in its scope
+   */
+  private moveMember(document: vscode.TextDocument, position: vscode.Position, direction: 'up' | 'down'): { newPosition: vscode.Position, moved: boolean } | null {
+    try {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || editor.document !== document) {
+        return { newPosition: position, moved: false };
+      }
+
+      const members = this.getMembersInCurrentScope(document, position);
+      if (members.length < 2) {
+        console.log('Need at least 2 members to move');
+        return { newPosition: position, moved: false };
+      }
+
+      // Get all selected members based on current selections
+      const selectedMembers = this.getSelectedMembers(document, editor.selections, members);
+
+      if (selectedMembers.length === 0) {
+        console.log('No members found in selection');
+        return { newPosition: position, moved: false };
+      }
+
+      if (selectedMembers.length === 1) {
+        // Single member - use existing logic
+        return this.moveSingleMember(document, selectedMembers[0], members, direction);
+      } else {
+        // Multiple members - move as a block
+        return this.moveMultipleMembers(document, selectedMembers, members, direction);
+      }
+    } catch (error) {
+      console.error('Error moving member:', error);
+      return { newPosition: position, moved: false };
+    }
+  }
+
+  /**
+   * Get all members that intersect with the current selections
+   */
+  private getSelectedMembers(document: vscode.TextDocument, selections: readonly vscode.Selection[], allMembers: { range: vscode.Range, text: string, name: string }[]): { range: vscode.Range, text: string, name: string, index: number }[] {
+    const selectedMembers: { range: vscode.Range, text: string, name: string, index: number }[] = [];
+
+    console.log('\n=== SELECTED MEMBERS DEBUG ===');
+    console.log('All members in scope:');
+    allMembers.forEach((member, i) => {
+      console.log(`  ${i}: "${member.name}" at line ${member.range.start.line + 1}`);
+      console.log(`     Text: ${member.text.trim().substring(0, 80)}...`);
+    });
+
+    for (let i = 0; i < allMembers.length; i++) {
+      const member = allMembers[i];
+
+      // Check if any selection intersects with this member
+      for (const selection of selections) {
+        if (this.rangesIntersect(selection, member.range)) {
+          selectedMembers.push({ ...member, index: i });
+          console.log(`Selected member: "${member.name}" (index ${i})`);
+          break; // Don't add the same member multiple times
+        }
+      }
+    }
+
+    console.log(`Total selected members: ${selectedMembers.length}`);
+
+    // Sort by index to maintain order
+    selectedMembers.sort((a, b) => a.index - b.index);
+
+    return selectedMembers;
+  }
+
+  /**
+   * Check if two ranges intersect
+   */
+  private rangesIntersect(range1: vscode.Range, range2: vscode.Range): boolean {
+    return !(range1.end.isBefore(range2.start) || range2.end.isBefore(range1.start));
+  }
+
+  /**
+   * Move a single member (original logic)
+   */
+  private moveSingleMember(
+    document: vscode.TextDocument,
+    selectedMember: { range: vscode.Range, text: string, name: string, index: number },
+    allMembers: { range: vscode.Range, text: string, name: string }[],
+    direction: 'up' | 'down'
+  ): { newPosition: vscode.Position, moved: boolean } {
+    const currentMemberIndex = selectedMember.index;
+    const targetIndex = direction === 'up' ? currentMemberIndex - 1 : currentMemberIndex + 1;
+
+    // Check bounds
+    if (targetIndex < 0 || targetIndex >= allMembers.length) {
+      console.log(`Cannot move member ${direction}: already at ${direction === 'up' ? 'top' : 'bottom'}`);
+      return { newPosition: selectedMember.range.start, moved: false };
+    }
+
+    const currentMember = allMembers[currentMemberIndex];
+    const targetMember = allMembers[targetIndex];
+
+    console.log(`Moving member "${currentMember.name}" ${direction} (swapping with "${targetMember.name}")`);
+
+    // Perform the swap and get the new position
+    const swapResult = this.swapMembers(document, currentMember, targetMember, direction);
+
+    return swapResult;
+  }
+
+  /**
+   * Move multiple members as a block
+   */
+  private moveMultipleMembers(
+    document: vscode.TextDocument,
+    selectedMembers: { range: vscode.Range, text: string, name: string, index: number }[],
+    allMembers: { range: vscode.Range, text: string, name: string }[],
+    direction: 'up' | 'down'
+  ): { newPosition: vscode.Position, moved: boolean } {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document !== document) {
+      return { newPosition: selectedMembers[0].range.start, moved: false };
+    }
+
+    // Store the current selections relative to their members for restoration
+    const selectionInfo = this.captureSelectionInfo(document, editor.selections, selectedMembers);
+
+    // Store the original scope information to help find it after the move
+    const originalScopePosition = selectedMembers[0].range.start;
+    const originalScope = this.getMembersInCurrentScope(document, originalScopePosition);
+
+    // Get the range of indices for selected members
+    const minIndex = Math.min(...selectedMembers.map(m => m.index));
+    const maxIndex = Math.max(...selectedMembers.map(m => m.index));
+
+    // Check if we can move the block
+    if (direction === 'up' && minIndex === 0) {
+      console.log('Cannot move block up: already at top');
+      return { newPosition: selectedMembers[0].range.start, moved: false };
+    }
+
+    if (direction === 'down' && maxIndex === allMembers.length - 1) {
+      console.log('Cannot move block down: already at bottom');
+      return { newPosition: selectedMembers[0].range.start, moved: false };
+    }
+
+    console.log(`Moving ${selectedMembers.length} members ${direction} as a block`);
+
+    // Calculate what we're swapping with and the context for search
+    let targetMember: { range: vscode.Range, text: string, name: string };
+    let searchContext: { direction: string, targetMemberPosition: vscode.Position, originalBlockPosition: vscode.Position };
+
+    if (direction === 'up') {
+      // Moving up: swap with the member just above the block
+      targetMember = allMembers[minIndex - 1];
+      searchContext = {
+        direction: 'up',
+        targetMemberPosition: targetMember.range.start,
+        originalBlockPosition: selectedMembers[0].range.start
+      };
+
+      // Perform the block move
+      this.moveBlockUpWithSelection(document, selectedMembers, targetMember, selectionInfo, originalScope, searchContext);
+    } else {
+      // Moving down: swap with the member just below the block
+      targetMember = allMembers[maxIndex + 1];
+      searchContext = {
+        direction: 'down',
+        targetMemberPosition: targetMember.range.start,
+        originalBlockPosition: selectedMembers[0].range.start
+      };
+
+      // Perform the block move
+      this.moveBlockDownWithSelection(document, selectedMembers, targetMember, selectionInfo, originalScope, searchContext);
+    }
+
+    return { newPosition: selectedMembers[0].range.start, moved: true };
+  }
+
+  /**
+   * Capture selection information relative to member content
+   */
+  private captureSelectionInfo(
+    document: vscode.TextDocument,
+    selections: readonly vscode.Selection[],
+    selectedMembers: { range: vscode.Range, text: string, name: string, index: number }[]
+  ): { memberName: string, relativeStart: number, relativeEnd: number }[] {
+    const selectionInfo: { memberName: string, relativeStart: number, relativeEnd: number }[] = [];
+
+    // First, ensure all selected members have at least a default selection
+    const membersWithSelections = new Set<string>();
+
+    for (const selection of selections) {
+      // Find all members that this selection intersects with
+      const intersectingMembers = selectedMembers.filter(member =>
+        this.rangesIntersect(selection, member.range)
+      );
+
+      if (intersectingMembers.length === 0) continue;
+
+      if (intersectingMembers.length === 1) {
+        // Simple case: selection intersects with only one member
+        const member = intersectingMembers[0];
+        const memberStartOffset = document.offsetAt(member.range.start);
+        const selectionStartOffset = document.offsetAt(selection.start);
+        const selectionEndOffset = document.offsetAt(selection.end);
+
+        const relativeStart = selectionStartOffset - memberStartOffset;
+        const relativeEnd = selectionEndOffset - memberStartOffset;
+
+        selectionInfo.push({
+          memberName: member.name,
+          relativeStart,
+          relativeEnd
+        });
+
+        membersWithSelections.add(member.name);
+      } else {
+        // Complex case: selection spans multiple members
+        // Create appropriate selections for each intersecting member
+        for (const member of intersectingMembers) {
+          const memberStartOffset = document.offsetAt(member.range.start);
+          const memberEndOffset = document.offsetAt(member.range.end);
+          const selectionStartOffset = document.offsetAt(selection.start);
+          const selectionEndOffset = document.offsetAt(selection.end);
+
+          // Calculate the intersection of the selection with this member
+          const intersectionStart = Math.max(memberStartOffset, selectionStartOffset);
+          const intersectionEnd = Math.min(memberEndOffset, selectionEndOffset);
+
+          // If there's a valid intersection, create a selection for this member
+          if (intersectionStart < intersectionEnd) {
+            const relativeStart = intersectionStart - memberStartOffset;
+            const relativeEnd = intersectionEnd - memberStartOffset;
+
+            selectionInfo.push({
+              memberName: member.name,
+              relativeStart,
+              relativeEnd
+            });
+
+            membersWithSelections.add(member.name);
+          }
+        }
+      }
+    }
+
+    // For any selected members that don't have a selection yet, create a default full selection
+    for (const member of selectedMembers) {
+      if (!membersWithSelections.has(member.name)) {
+        selectionInfo.push({
+          memberName: member.name,
+          relativeStart: 0,
+          relativeEnd: document.offsetAt(member.range.end) - document.offsetAt(member.range.start)
+        });
+      }
+    }
+
+    return selectionInfo;
+  }
+
+  /**
+   * Move a block of members up by swapping with the member above and preserve selections
+   */
+  private moveBlockUpWithSelection(
+    document: vscode.TextDocument,
+    selectedMembers: { range: vscode.Range, text: string, name: string, index: number }[],
+    targetMember: { range: vscode.Range, text: string, name: string },
+    selectionInfo: { memberName: string, relativeStart: number, relativeEnd: number }[],
+    originalScope: { range: vscode.Range, text: string, name: string }[],
+    searchContext: { direction: string, targetMemberPosition: vscode.Position, originalBlockPosition: vscode.Position }
+  ): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document !== document) {
+      return;
+    }
+
+    // Get the complete block text including spacing
+    const blockStart = selectedMembers[0].range.start;
+    const blockEnd = selectedMembers[selectedMembers.length - 1].range.end;
+    const blockRange = new vscode.Range(blockStart, blockEnd);
+    const completeBlockText = document.getText(blockRange);
+
+    // Create the edit and handle selection restoration in the then callback
+    editor.edit(editBuilder => {
+      // Replace the target member with the complete block (including spacing)
+      editBuilder.replace(targetMember.range, completeBlockText);
+
+      // Replace the block with the target member
+      editBuilder.replace(blockRange, targetMember.text);
+    }).then((success) => {
+      if (success) {
+        // Wait for document update and restore selections
+        setTimeout(() => {
+          this.restoreSelectionsAfterMoveByMemberNames(document, selectionInfo, originalScope, searchContext);
+        }, 150);
+      }
+    });
+  }
+
+  /**
+   * Move a block of members down by swapping with the member below and preserve selections
+   */
+  private moveBlockDownWithSelection(
+    document: vscode.TextDocument,
+    selectedMembers: { range: vscode.Range, text: string, name: string, index: number }[],
+    targetMember: { range: vscode.Range, text: string, name: string },
+    selectionInfo: { memberName: string, relativeStart: number, relativeEnd: number }[],
+    originalScope: { range: vscode.Range, text: string, name: string }[],
+    searchContext: { direction: string, targetMemberPosition: vscode.Position, originalBlockPosition: vscode.Position }
+  ): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document !== document) {
+      return;
+    }
+
+    // Get the complete block text including spacing
+    const blockStart = selectedMembers[0].range.start;
+    const blockEnd = selectedMembers[selectedMembers.length - 1].range.end;
+    const blockRange = new vscode.Range(blockStart, blockEnd);
+    const completeBlockText = document.getText(blockRange);
+
+    // Create the edit and handle selection restoration in the then callback
+    editor.edit(editBuilder => {
+      // Replace the block with the target member
+      editBuilder.replace(blockRange, targetMember.text);
+
+      // Replace the target member with the complete block (including spacing)
+      editBuilder.replace(targetMember.range, completeBlockText);
+    }).then((success) => {
+      if (success) {
+        // Wait for document update and restore selections
+        setTimeout(() => {
+          this.restoreSelectionsAfterMoveByMemberNames(document, selectionInfo, originalScope, searchContext);
+        }, 150);
+      }
+    });
+  }
+
+  /**
+   * Restore selections by finding members by their names in the new document
+   */
+  private restoreSelectionsAfterMoveByMemberNames(
+    document: vscode.TextDocument,
+    selectionInfo: { memberName: string, relativeStart: number, relativeEnd: number }[],
+    originalScope: { range: vscode.Range, text: string, name: string }[],
+    searchContext: { direction: string, targetMemberPosition: vscode.Position, originalBlockPosition: vscode.Position }
+  ): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document !== document) {
+      return;
+    }
+
+    try {
+      // Find the scope by looking for a position that contains the expected members
+      let currentMembers: { range: vscode.Range, text: string, name: string }[] = [];
+
+      // Create smart search positions based on movement direction
+      const searchPositions: vscode.Position[] = [];
+
+      // Add positions of non-moved members (most reliable)
+      const nonMovedMembers = originalScope.filter(m => !selectionInfo.some(s => s.memberName === m.name));
+      searchPositions.push(...nonMovedMembers.map(m => m.range.start));
+
+      if (searchContext.direction === 'up') {
+        // When moving up, the block moved to the target member's position
+        searchPositions.push(searchContext.targetMemberPosition);
+        searchPositions.push(new vscode.Position(searchContext.targetMemberPosition.line + 2, 0));
+        searchPositions.push(new vscode.Position(Math.max(0, searchContext.targetMemberPosition.line - 2), 0));
+      } else {
+        // When moving down, the block moved to around the target member's position
+        // But we need to search in a wider area since the swap affects positions
+        searchPositions.push(searchContext.targetMemberPosition);
+        searchPositions.push(new vscode.Position(searchContext.targetMemberPosition.line - 5, 0));
+        searchPositions.push(new vscode.Position(searchContext.targetMemberPosition.line + 5, 0));
+        searchPositions.push(new vscode.Position(searchContext.originalBlockPosition.line + 10, 0));
+
+        // Also try searching from the original scope area in case the structure changed
+        searchPositions.push(searchContext.originalBlockPosition);
+        searchPositions.push(new vscode.Position(searchContext.originalBlockPosition.line + 15, 0));
+      }
+
+      // Add general fallback positions around the original scope
+      searchPositions.push(
+        new vscode.Position(Math.max(0, originalScope[0].range.start.line - 10), 0),
+        new vscode.Position(originalScope[0].range.start.line, 0),
+        new vscode.Position(originalScope[0].range.start.line + 20, 0)
+      );
+
+      for (const searchPos of searchPositions) {
+        try {
+          const testMembers = this.getMembersInCurrentScope(document, searchPos);
+
+          console.log(`\n--- Testing search position ${searchPos.line}:${searchPos.character} ---`);
+          console.log(`Found ${testMembers.length} members:`);
+          testMembers.forEach((member, i) => {
+            console.log(`  ${i}: "${member.name}" at line ${member.range.start.line + 1}`);
+            console.log(`     Text: ${member.text.trim().substring(0, 80)}...`);
+          });
+
+          // Check if this scope contains our expected members
+          const foundTargetMembers = selectionInfo.filter(s => testMembers.some(m => m.name === s.memberName));
+          console.log(`Found ${foundTargetMembers.length} of ${selectionInfo.length} target members`);
+          foundTargetMembers.forEach(target => {
+            console.log(`  Target member found: "${target.memberName}"`);
+          });
+
+          if (foundTargetMembers.length > 0 && testMembers.length >= originalScope.length - 1) {
+            console.log(`✓ Using this scope (has target members and sufficient total members)`);
+            currentMembers = testMembers;
+            break;
+          } else {
+            console.log(`✗ Skipping this scope (insufficient matches)`);
+          }
+        } catch (error) {
+          console.log(`✗ Error at position ${searchPos.line}:${searchPos.character}:`, error instanceof Error ? error.message : String(error));
+          // Continue to next search position
+        }
+      }
+
+      if (currentMembers.length === 0) {
+        return;
+      }
+
+      const newSelections: vscode.Selection[] = [];
+
+      // Process each captured selection individually
+      for (const selInfo of selectionInfo) {
+        // Find the member by name in the new positions
+        // Use improved matching to find the actual member declaration, not just any reference
+        const foundMember = this.findMemberByNameAndCharacteristics(currentMembers, selInfo.memberName, originalScope);
+
+        if (foundMember) {
+          // Calculate the new selection position
+          const memberStartOffset = document.offsetAt(foundMember.range.start);
+          const newSelectionStartOffset = memberStartOffset + selInfo.relativeStart;
+          const newSelectionEndOffset = memberStartOffset + selInfo.relativeEnd;
+
+          // Ensure we don't go beyond the member bounds
+          const memberEndOffset = document.offsetAt(foundMember.range.end);
+          const clampedStartOffset = Math.max(memberStartOffset, Math.min(newSelectionStartOffset, memberEndOffset));
+          const clampedEndOffset = Math.max(memberStartOffset, Math.min(newSelectionEndOffset, memberEndOffset));
+
+          const newStart = document.positionAt(clampedStartOffset);
+          const newEnd = document.positionAt(clampedEndOffset);
+
+          newSelections.push(new vscode.Selection(newStart, newEnd));
+        }
+      }
+
+      // Apply the new selections
+      if (newSelections.length > 0) {
+        editor.selections = newSelections;
+        // Center on the first selection (the moved block)
+        editor.revealRange(newSelections[0], vscode.TextEditorRevealType.InCenter);
+      }
+    } catch (error) {
+      console.error('Error restoring selections after move:', error);
+    }
+  }
+
+  /**
+   * Find a member by name and characteristics to avoid finding references instead of declarations
+   */
+  private findMemberByNameAndCharacteristics(
+    currentMembers: { range: vscode.Range, text: string, name: string }[],
+    targetName: string,
+    originalScope: { range: vscode.Range, text: string, name: string }[]
+  ): { range: vscode.Range, text: string, name: string } | undefined {
+    // Find the original member to get its characteristics
+    const originalMember = originalScope.find(m => m.name === targetName);
+    if (!originalMember) {
+      // Fallback to simple name matching
+      return currentMembers.find(m => m.name === targetName);
+    }
+
+    // Find candidates with the same name
+    const candidates = currentMembers.filter(m => m.name === targetName);
+
+    console.log(`\n=== Finding member "${targetName}" ===`);
+    console.log(`Found ${candidates.length} candidates:`);
+    candidates.forEach((candidate, i) => {
+      console.log(`Candidate ${i + 1}: "${candidate.name}" at line ${candidate.range.start.line + 1}`);
+      console.log(`Text preview: ${candidate.text.trim().substring(0, 100)}...`);
+    });
+
+    if (candidates.length === 0) {
+      console.log(`No candidates found for "${targetName}"`);
+      return undefined;
+    }
+
+    if (candidates.length === 1) {
+      console.log(`Only one candidate, using it`);
+      return candidates[0];
+    }
+
+    // Multiple candidates - use characteristics to find the best match
+    const originalText = originalMember.text.trim();
+    const originalLineCount = originalMember.range.end.line - originalMember.range.start.line + 1;
+
+    console.log(`Original member had ${originalLineCount} lines`);
+
+    // Score each candidate based on similarity to the original
+    let bestCandidate = candidates[0];
+    let bestScore = -1000; // Start with very low score
+
+    for (let i = 0; i < candidates.length; i++) {
+      const candidate = candidates[i];
+      let score = 0;
+      const candidateText = candidate.text.trim();
+      const candidateLineCount = candidate.range.end.line - candidate.range.start.line + 1;
+
+      console.log(`\nScoring candidate ${i + 1} for "${targetName}":`);
+      console.log(`Text: ${candidateText.substring(0, 150)}...`);
+
+      // CRITICAL: Check if this is actually a declaration of the target name
+      const isActualDeclaration = this.isActualDeclaration(candidateText, targetName);
+      const isJustReference = this.isJustReference(candidateText, targetName);
+
+      console.log(`Is actual declaration: ${isActualDeclaration}`);
+      console.log(`Is just reference: ${isJustReference}`);
+
+      if (isActualDeclaration) {
+        score += 1000; // VERY high score for actual declarations
+        console.log(`+1000 for being actual declaration`);
+      } else if (isJustReference) {
+        score -= 500; // Heavy penalty for just being a reference
+        console.log(`-500 for being just a reference`);
+      }
+
+      // Additional check: The member name should match the start of the declaration
+      if (this.startsWithTargetName(candidateText, targetName)) {
+        score += 500;
+        console.log(`+500 for starting with target name`);
+      }
+
+      // Score based on text similarity (lower weight now)
+      if (candidateText === originalText) {
+        score += 100; // Exact match
+        console.log(`+100 for exact text match`);
+      } else if (candidateText.length > 0 && originalText.length > 0) {
+        const similarity = this.calculateTextSimilarity(originalText, candidateText);
+        const similarityScore = similarity * 50;
+        score += similarityScore;
+        console.log(`+${similarityScore.toFixed(1)} for text similarity (${(similarity * 100).toFixed(1)}%)`);
+      }
+
+      // Score based on line count similarity (lower weight)
+      if (candidateLineCount === originalLineCount) {
+        score += 20;
+        console.log(`+20 for matching line count`);
+      }
+
+      console.log(`Total score: ${score}`);
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestCandidate = candidate;
+        console.log(`New best candidate!`);
+      }
+    }
+
+    console.log(`\nSelected candidate with score ${bestScore}: "${bestCandidate.name}" at line ${bestCandidate.range.start.line + 1}`);
+    console.log(`Selected text: ${bestCandidate.text.trim().substring(0, 100)}...`);
+
+    return bestCandidate;
+  }
+
+  /**
+   * Check if the text starts with the target name as a declaration
+   */
+  private startsWithTargetName(text: string, targetName: string): boolean {
+    const trimmedText = text.trim();
+
+    // Check various patterns where the target name starts the declaration
+    // const/let/var targetName
+    if (this.startsWithPattern(trimmedText, 'const ', targetName) ||
+      this.startsWithPattern(trimmedText, 'let ', targetName) ||
+      this.startsWithPattern(trimmedText, 'var ', targetName)) {
+      return true;
+    }
+
+    // function targetName or async function targetName
+    if (this.startsWithPattern(trimmedText, 'function ', targetName) ||
+      this.startsWithPattern(trimmedText, 'async function ', targetName)) {
+      return true;
+    }
+
+    // targetName: or targetName(
+    if (trimmedText.startsWith(targetName)) {
+      const afterName = trimmedText.substring(targetName.length).trim();
+      if (afterName.startsWith(':') || afterName.startsWith('(')) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Helper method to check if text starts with a keyword followed by target name
+   */
+  private startsWithPattern(text: string, keyword: string, targetName: string): boolean {
+    if (!text.startsWith(keyword)) {
+      return false;
+    }
+    const afterKeyword = text.substring(keyword.length).trim();
+    return afterKeyword.startsWith(targetName) &&
+      (afterKeyword.length === targetName.length ||
+        !this.isIdentifierChar(afterKeyword.charAt(targetName.length)));
+  }
+
+  /**
+   * Check if character is a valid identifier character
+   */
+  private isIdentifierChar(char: string): boolean {
+    return (char >= 'a' && char <= 'z') ||
+      (char >= 'A' && char <= 'Z') ||
+      (char >= '0' && char <= '9') ||
+      char === '_' || char === '$';
+  }
+
+  /**
+   * Check if the text is an actual declaration of the target name
+   */
+  private isActualDeclaration(text: string, targetName: string): boolean {
+    const trimmedText = text.trim();
+
+    // Check for various declaration patterns
+
+    // const/let/var targetName =
+    if (this.isVariableDeclaration(trimmedText, targetName)) {
+      return true;
+    }
+
+    // function targetName( or async function targetName(
+    if (this.isFunctionDeclaration(trimmedText, targetName)) {
+      return true;
+    }
+
+    // targetName( - function call or function expression
+    if (this.isFunctionCall(trimmedText, targetName)) {
+      return true;
+    }
+
+    // targetName: ... - object property
+    if (this.isPropertyDeclaration(trimmedText, targetName)) {
+      return true;
+    }
+
+    // class/interface/type targetName
+    if (this.isTypeDeclaration(trimmedText, targetName)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if text is a variable declaration (const/let/var targetName = ...)
+   */
+  private isVariableDeclaration(text: string, targetName: string): boolean {
+    const keywords = ['const ', 'let ', 'var '];
+    for (const keyword of keywords) {
+      if (text.startsWith(keyword)) {
+        const afterKeyword = text.substring(keyword.length).trim();
+        if (this.nameFollowedByAssignment(afterKeyword, targetName)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Check if text is a function declaration
+   */
+  private isFunctionDeclaration(text: string, targetName: string): boolean {
+    if (this.startsWithPattern(text, 'function ', targetName)) {
+      const afterName = text.substring(('function ' + targetName).length).trim();
+      return afterName.startsWith('(');
+    }
+    if (this.startsWithPattern(text, 'async function ', targetName)) {
+      const afterName = text.substring(('async function ' + targetName).length).trim();
+      return afterName.startsWith('(');
+    }
+    return false;
+  }
+
+  /**
+   * Check if text is a function call or function expression
+   */
+  private isFunctionCall(text: string, targetName: string): boolean {
+    if (text.startsWith(targetName)) {
+      const afterName = text.substring(targetName.length).trim();
+      return afterName.startsWith('(');
+    }
+    return false;
+  }
+
+  /**
+   * Check if text is a property declaration (targetName: ...)
+   */
+  private isPropertyDeclaration(text: string, targetName: string): boolean {
+    if (text.startsWith(targetName)) {
+      const afterName = text.substring(targetName.length).trim();
+      if (afterName.startsWith(':')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Check if text is a type declaration (class/interface/type targetName)
+   */
+  private isTypeDeclaration(text: string, targetName: string): boolean {
+    const typeKeywords = ['class ', 'interface ', 'type '];
+    for (const keyword of typeKeywords) {
+      if (this.startsWithPattern(text, keyword, targetName)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Check if name is followed by assignment (= or :)
+   */
+  private nameFollowedByAssignment(text: string, targetName: string): boolean {
+    if (!text.startsWith(targetName)) {
+      return false;
+    }
+    const afterName = text.substring(targetName.length).trim();
+    return afterName.startsWith('=') || afterName.startsWith(':');
+  }
+
+  /**
+   * Check if the text just contains references to the target name but isn't a declaration
+   */
+  private isJustReference(text: string, targetName: string): boolean {
+    const trimmedText = text.trim();
+
+    // If it's an actual declaration, it's not just a reference
+    if (this.isActualDeclaration(trimmedText, targetName)) {
+      return false;
+    }
+
+    // Check if the text contains the target name but doesn't declare it
+    const containsName = this.containsWordBoundary(trimmedText, targetName);
+
+    // If it contains the name but isn't a declaration, it's likely just a reference
+    return containsName;
+  }
+
+  /**
+   * Check if text contains target name with word boundaries
+   */
+  private containsWordBoundary(text: string, targetName: string): boolean {
+    let index = 0;
+    while ((index = text.indexOf(targetName, index)) !== -1) {
+      // Check if it's a word boundary (not preceded or followed by identifier chars)
+      const before = index > 0 ? text[index - 1] : ' ';
+      const after = index + targetName.length < text.length ? text[index + targetName.length] : ' ';
+
+      if (!this.isIdentifierChar(before) && !this.isIdentifierChar(after)) {
+        return true;
+      }
+      index++;
+    }
+    return false;
+  }
+
+  /**
+   * Calculate text similarity between two strings (simple implementation)
+   */
+  private calculateTextSimilarity(text1: string, text2: string): number {
+    if (text1 === text2) return 1.0;
+    if (text1.length === 0 || text2.length === 0) return 0.0;
+
+    // Simple similarity based on common characters and length
+    const shorter = text1.length < text2.length ? text1 : text2;
+    const longer = text1.length >= text2.length ? text1 : text2;
+
+    if (longer.includes(shorter)) {
+      return shorter.length / longer.length;
+    }
+
+    // Count common characters (very basic similarity)
+    let commonChars = 0;
+    for (const char of shorter) {
+      if (longer.includes(char)) {
+        commonChars++;
+      }
+    }
+
+    return commonChars / longer.length;
+  }
+
+  /**
+   * Swap two members in the document
+   */
+  private swapMembers(
+    document: vscode.TextDocument,
+    memberA: { range: vscode.Range, text: string, name: string },
+    memberB: { range: vscode.Range, text: string, name: string },
+    direction: 'up' | 'down'
+  ): { newPosition: vscode.Position, moved: boolean } {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document !== document) {
+      throw new Error('No active editor or document mismatch');
+    }
+
+    // Store the name of the member we're moving to find it later
+    const movingMemberName = memberA.name;
+
+    // Determine which member comes first in the document
+    const firstMember = memberA.range.start.isBefore(memberB.range.start) ? memberA : memberB;
+    const secondMember = firstMember === memberA ? memberB : memberA;
+
+    // Perform the swap using editor.edit
+    const editPromise = editor.edit(editBuilder => {
+      // Replace in reverse order to avoid position shifts
+      if (firstMember.range.start.isBefore(secondMember.range.start)) {
+        // Second member is after first member
+        editBuilder.replace(secondMember.range, firstMember.text);
+        editBuilder.replace(firstMember.range, secondMember.text);
+      } else {
+        // First member is after second member (shouldn't happen but just in case)
+        editBuilder.replace(firstMember.range, secondMember.text);
+        editBuilder.replace(secondMember.range, firstMember.text);
+      }
+    });
+
+    // Return a promise-like structure that will resolve to the new position
+    editPromise.then(() => {
+      // After the edit completes, find the moved member in its new position
+      setTimeout(() => {
+        this.findMemberAndPositionCursor(document, movingMemberName);
+      }, 100);
+    });
+
+    // For immediate return, estimate the position
+    const estimatedPosition = direction === 'up' ? memberB.range.start :
+      new vscode.Position(memberB.range.end.line, memberA.range.start.character);
+
+    return { newPosition: estimatedPosition, moved: true };
+  }
+
+  /**
+   * Find a member by name and position the cursor on it
+   */
+  private findMemberAndPositionCursor(document: vscode.TextDocument, memberName: string): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document !== document) {
+      return;
+    }
+
+    try {
+      console.log(`\n=== POSITIONING CURSOR ON "${memberName}" ===`);
+
+      // Instead of using current cursor position, search for the scope that contains the target member
+      // Try multiple search positions to find the right scope
+      const searchPositions = [
+        // Try from the beginning of the file area where we expect the scope
+        new vscode.Position(0, 0),
+        new vscode.Position(10, 0),
+        new vscode.Position(15, 0),
+        new vscode.Position(20, 0),
+        new vscode.Position(25, 0),
+        new vscode.Position(30, 0),
+        new vscode.Position(35, 0),
+        new vscode.Position(40, 0),
+      ];
+
+      let foundMember: { range: vscode.Range, text: string, name: string } | undefined;
+
+      for (const searchPos of searchPositions) {
+        try {
+          const members = this.getMembersInCurrentScope(document, searchPos);
+          console.log(`Searching at ${searchPos.line}:${searchPos.character} - found ${members.length} members:`, members.map(m => m.name));
+
+          const targetMember = members.find(member => member.name === memberName);
+          if (targetMember) {
+            // Additional check: make sure this is actually a declaration, not just a reference
+            if (this.isActualDeclaration(targetMember.text.trim(), memberName)) {
+              console.log(`Found actual declaration of "${memberName}" at line ${targetMember.range.start.line + 1}`);
+              foundMember = targetMember;
+              break;
+            } else {
+              console.log(`Found "${memberName}" but it's not a declaration, continuing search...`);
+            }
+          }
+        } catch (error) {
+          // Continue searching
+        }
+      }
+
+      if (foundMember) {
+        // Position cursor at the start of the found member
+        const newPosition = foundMember.range.start;
+        const newSelection = new vscode.Selection(newPosition, newPosition);
+
+        // Update selection and reveal the position
+        editor.selection = newSelection;
+        editor.revealRange(foundMember.range, vscode.TextEditorRevealType.InCenter);
+
+        console.log(`✓ Positioned cursor on moved member "${memberName}" at line ${newPosition.line + 1}, column ${newPosition.character + 1}`);
+      } else {
+        console.log(`✗ Could not find declaration of "${memberName}" in any scope`);
+
+        // Fallback: try to find the member by searching the document text for declaration patterns
+        const memberText = document.getText();
+        const lines = memberText.split('\n');
+
+        // Look for declaration patterns instead of just any occurrence
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+          const line = lines[lineIndex];
+
+          // Check various declaration patterns
+          if (this.isVariableDeclaration(line.trim(), memberName) ||
+            this.isFunctionDeclaration(line.trim(), memberName) ||
+            this.isPropertyDeclaration(line.trim(), memberName)) {
+
+            const fallbackPosition = new vscode.Position(lineIndex, 0);
+            editor.selection = new vscode.Selection(fallbackPosition, fallbackPosition);
+            console.log(`Fallback: positioned cursor at declaration pattern of "${memberName}" at line ${fallbackPosition.line + 1}`);
+            return;
+          }
+        }
+
+        console.log(`No declaration pattern found for "${memberName}"`);
+      }
+    } catch (error) {
+      console.error('Error positioning cursor after member move:', error);
+    }
+  }
+
+  // ========================================
   // CORE AST PROCESSING
   // ========================================
 
@@ -558,7 +1599,7 @@ export class TypeScriptHandler extends BaseLanguageHandler {
 
     // If it's part of a variable declaration, include the entire declaration
     if (ts.isVariableDeclaration(parent)) {
-      const variableStatement = this.findAncestorOfKind(parent, ts.SyntaxKind.VariableStatement);
+      const variableStatement = this.findAncestorOfKind(node, ts.SyntaxKind.VariableStatement);
       if (variableStatement) {
         return this.nodeToRange(document, variableStatement);
       }
@@ -973,6 +2014,306 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     const start = document.positionAt(node.getStart());
     const end = document.positionAt(node.getEnd());
     return new vscode.Range(start, end);
+  }
+
+  // ========================================
+  // HELPER METHODS FOR SCOPE AND MEMBER NAVIGATION
+  // ========================================
+
+  /**
+   * Find the function node that contains the given position
+   */
+  private findContainingFunction(node: ts.Node, position: number): ts.Node | null {
+    // Check if current node is a function and contains the position
+    if (this.isFunctionNode(node) && this.nodeContainsPosition(node, position)) {
+      return node;
+    }
+
+    // Recursively search children
+    for (const child of node.getChildren()) {
+      if (this.nodeContainsPosition(child, position)) {
+        const result = this.findContainingFunction(child, position);
+        if (result) {
+          return result;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Find the scope node that contains the given position
+   */
+  private findContainingScope(node: ts.Node, position: number): ts.Node | null {
+    console.log(`Checking node of kind ${ts.SyntaxKind[node.kind]} for position ${position}`);
+
+    // Check if current node is a scope container and contains the position
+    if (this.isScopeContainer(node) && this.nodeContainsPosition(node, position)) {
+      console.log(`Found potential scope container: ${ts.SyntaxKind[node.kind]}`);
+
+      // Look for a more specific scope in children first
+      let bestScope = node;
+      for (const child of node.getChildren()) {
+        if (this.nodeContainsPosition(child, position)) {
+          const childScope = this.findContainingScope(child, position);
+          if (childScope) {
+            // Prefer object literals and classes over individual methods
+            if (this.isPreferredScope(childScope) || !this.isPreferredScope(bestScope)) {
+              bestScope = childScope;
+            }
+          }
+        }
+      }
+
+      console.log(`Using scope container: ${ts.SyntaxKind[bestScope.kind]}`);
+      return bestScope;
+    }
+
+    // Recursively search children
+    for (const child of node.getChildren()) {
+      if (this.nodeContainsPosition(child, position)) {
+        const result = this.findContainingScope(child, position);
+        if (result) {
+          return result;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if a scope type is preferred for member navigation
+   */
+  private isPreferredScope(node: ts.Node): boolean {
+    return ts.isClassDeclaration(node) ||
+      ts.isInterfaceDeclaration(node) ||
+      ts.isObjectLiteralExpression(node) ||
+      ts.isSourceFile(node) ||
+      ts.isModuleDeclaration(node) ||
+      // Allow function bodies for local variable navigation
+      (ts.isBlock(node) && this.isDirectFunctionBody(node));
+  }
+
+  /**
+   * Get the range of a function's body content
+   */
+  private getFunctionBodyRange(document: vscode.TextDocument, functionNode: ts.Node): vscode.Range | null {
+    // Find the function body
+    let body: ts.Node | undefined;
+
+    if (ts.isFunctionDeclaration(functionNode) || ts.isFunctionExpression(functionNode) || ts.isMethodDeclaration(functionNode)) {
+      body = functionNode.body;
+    } else if (ts.isArrowFunction(functionNode)) {
+      body = functionNode.body;
+    }
+
+    if (!body) {
+      return null;
+    }
+
+    // If it's a block, return the content inside the braces
+    if (ts.isBlock(body)) {
+      const start = document.positionAt(body.getStart() + 1); // +1 to skip opening brace
+      const end = document.positionAt(body.getEnd() - 1); // -1 to skip closing brace
+      return new vscode.Range(start, end);
+    }
+
+    // For arrow functions with expression bodies
+    return this.nodeToRange(document, body);
+  }
+
+  /**
+   * Extract all members from a scope node
+   */
+  private extractMembersFromScope(document: vscode.TextDocument, scopeNode: ts.Node): Array<{ range: vscode.Range, text: string, name: string }> {
+    const members: Array<{ range: vscode.Range, text: string, name: string }> = [];
+
+    console.log(`Extracting members from ${ts.SyntaxKind[scopeNode.kind]}`);
+
+    const addMember = (node: ts.Node, name: string) => {
+      const range = this.nodeToRange(document, node);
+      const text = document.getText(range);
+      members.push({ range, text, name });
+      console.log(`Added member: ${name} at line ${range.start.line}`);
+    };
+
+    const visitNode = (node: ts.Node) => {
+      console.log(`Visiting node: ${ts.SyntaxKind[node.kind]}`);
+      switch (node.kind) {
+        case ts.SyntaxKind.PropertyDeclaration:
+        case ts.SyntaxKind.MethodDeclaration:
+        case ts.SyntaxKind.GetAccessor:
+        case ts.SyntaxKind.SetAccessor:
+        case ts.SyntaxKind.Constructor:
+          if (ts.isClassElement(node) && node.name && ts.isIdentifier(node.name)) {
+            addMember(node, node.name.text);
+          } else if (ts.isConstructorDeclaration(node)) {
+            addMember(node, 'constructor');
+          }
+          break;
+
+        case ts.SyntaxKind.FunctionDeclaration:
+          if (ts.isFunctionDeclaration(node) && node.name) {
+            addMember(node, node.name.text);
+          }
+          break;
+
+        case ts.SyntaxKind.VariableStatement:
+          if (ts.isVariableStatement(node)) {
+            node.declarationList.declarations.forEach(decl => {
+              if (ts.isIdentifier(decl.name)) {
+                addMember(node, decl.name.text);
+              }
+            });
+          }
+          break;
+
+        case ts.SyntaxKind.VariableDeclaration:
+          // Handle individual variable declarations (for function scopes)
+          if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+            // Find the parent variable statement for the full range
+            const parentStatement = node.parent?.parent;
+            if (parentStatement && ts.isVariableStatement(parentStatement)) {
+              addMember(parentStatement, node.name.text);
+            } else {
+              addMember(node, node.name.text);
+            }
+          }
+          break;
+
+        case ts.SyntaxKind.FunctionExpression:
+        case ts.SyntaxKind.ArrowFunction:
+          // Handle function expressions/arrows as members when they're assigned to variables
+          if (node.parent && ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name)) {
+            const parentStatement = node.parent.parent?.parent;
+            if (parentStatement && ts.isVariableStatement(parentStatement)) {
+              addMember(parentStatement, node.parent.name.text);
+            }
+          }
+          break;
+
+        case ts.SyntaxKind.PropertyAssignment:
+        case ts.SyntaxKind.ShorthandPropertyAssignment:
+          if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name)) {
+            addMember(node, node.name.text);
+          } else if (ts.isShorthandPropertyAssignment(node)) {
+            addMember(node, node.name.text);
+          }
+          break;
+
+        case ts.SyntaxKind.PropertySignature:
+          if (ts.isPropertySignature(node) && node.name && ts.isIdentifier(node.name)) {
+            addMember(node, node.name.text);
+          }
+          break;
+
+        case ts.SyntaxKind.MethodSignature:
+          if (ts.isMethodSignature(node) && node.name && ts.isIdentifier(node.name)) {
+            addMember(node, node.name.text);
+          }
+          break;
+      }
+    };
+
+    // Visit direct children of the scope
+    if (ts.isClassDeclaration(scopeNode) || ts.isInterfaceDeclaration(scopeNode)) {
+      console.log(`Processing class/interface with ${scopeNode.members?.length || 0} members`);
+      scopeNode.members?.forEach(visitNode);
+    } else if (ts.isObjectLiteralExpression(scopeNode)) {
+      console.log(`Processing object literal with ${scopeNode.properties.length} properties`);
+      scopeNode.properties.forEach(visitNode);
+    } else if (ts.isBlock(scopeNode)) {
+      console.log(`Processing block with ${scopeNode.statements.length} statements`);
+      // For function blocks, we want to find variable declarations
+      const processBlockStatement = (stmt: ts.Node) => {
+        if (ts.isVariableStatement(stmt)) {
+          visitNode(stmt);
+        } else if (ts.isFunctionDeclaration(stmt)) {
+          visitNode(stmt);
+        } else if (ts.isExpressionStatement(stmt)) {
+          // Handle call expressions like watch(), onBeforeMount(), etc.
+          if (ts.isCallExpression(stmt.expression)) {
+            const callExpr = stmt.expression;
+            if (ts.isIdentifier(callExpr.expression)) {
+              addMember(stmt, callExpr.expression.text);
+            }
+          }
+        }
+      };
+
+      scopeNode.statements.forEach(processBlockStatement);
+    } else if (ts.isSourceFile(scopeNode)) {
+      console.log(`Processing source file with ${scopeNode.statements.length} statements`);
+      scopeNode.statements.forEach(visitNode);
+    } else {
+      console.log(`Processing other scope type, visiting all children`);
+      // For other scope types, visit all direct children
+      scopeNode.getChildren().forEach(visitNode);
+    }
+
+    console.log(`Total members extracted: ${members.length}`);
+
+    // Sort members by their position in the file
+    return members.sort((a, b) => {
+      const aStart = a.range.start;
+      const bStart = b.range.start;
+      if (aStart.line !== bStart.line) {
+        return aStart.line - bStart.line;
+      }
+      return aStart.character - bStart.character;
+    });
+  }
+
+  /**
+   * Check if a node is a function node
+   */
+  private isFunctionNode(node: ts.Node): boolean {
+    return ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node) ||
+      ts.isConstructorDeclaration(node);
+  }
+
+  /**
+   * Check if a node is a scope container
+   */
+  private isScopeContainer(node: ts.Node): boolean {
+    return ts.isClassDeclaration(node) ||
+      ts.isInterfaceDeclaration(node) ||
+      ts.isObjectLiteralExpression(node) ||
+      ts.isSourceFile(node) ||
+      ts.isModuleDeclaration(node) ||
+      // Include function bodies for local variable navigation
+      (ts.isBlock(node) && this.isDirectFunctionBody(node)) ||
+      // Include other blocks
+      ts.isBlock(node) ||
+      // Include functions as fallback scopes
+      this.isFunctionNode(node);
+  }
+
+  /**
+   * Check if a block is directly the body of a function
+   */
+  private isDirectFunctionBody(node: ts.Node): boolean {
+    if (!ts.isBlock(node) || !node.parent) {
+      return false;
+    }
+
+    return ts.isFunctionDeclaration(node.parent) ||
+      ts.isFunctionExpression(node.parent) ||
+      ts.isArrowFunction(node.parent) ||
+      ts.isMethodDeclaration(node.parent) ||
+      ts.isConstructorDeclaration(node.parent);
+  }
+
+  /**
+   * Check if a node contains a position
+   */
+  private nodeContainsPosition(node: ts.Node, position: number): boolean {
+    return node.getStart() <= position && position < node.getEnd();
   }
 
   // ========================================

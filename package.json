@@ -51,6 +51,46 @@
         "command": "variableFunctionDeleter.cutAtCursor",
         "title": "Cut Element at Cursor",
         "category": "Variable Function Deleter"
+      },
+      {
+        "command": "variableFunctionDeleter.selectFunctionScope",
+        "title": "Select Current Function Scope",
+        "category": "Variable Function Deleter"
+      },
+      {
+        "command": "variableFunctionDeleter.goToNextMember",
+        "title": "Go to Next Member",
+        "category": "Variable Function Deleter"
+      },
+      {
+        "command": "variableFunctionDeleter.selectNextMember",
+        "title": "Select Next Member",
+        "category": "Variable Function Deleter"
+      },
+      {
+        "command": "variableFunctionDeleter.sortMembersAZ",
+        "title": "Sort Selected Members A-Z",
+        "category": "Variable Function Deleter"
+      },
+      {
+        "command": "variableFunctionDeleter.sortMembersZA",
+        "title": "Sort Selected Members Z-A",
+        "category": "Variable Function Deleter"
+      },
+      {
+        "command": "variableFunctionDeleter.selectNextMemberAdd",
+        "title": "Add Next Member to Selection",
+        "category": "Variable Function Deleter"
+      },
+      {
+        "command": "variableFunctionDeleter.moveMemberUp",
+        "title": "Move Member Up",
+        "category": "Variable Function Deleter"
+      },
+      {
+        "command": "variableFunctionDeleter.moveMemberDown",
+        "title": "Move Member Down",
+        "category": "Variable Function Deleter"
       }
     ],
     "keybindings": [
@@ -64,6 +104,54 @@
         "command": "variableFunctionDeleter.cutAtCursor",
         "key": "ctrl+shift+x",
         "mac": "cmd+shift+x",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "variableFunctionDeleter.selectFunctionScope",
+        "key": "ctrl+shift+s",
+        "mac": "cmd+shift+s",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "variableFunctionDeleter.goToNextMember",
+        "key": "ctrl+shift+n",
+        "mac": "cmd+shift+n",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "variableFunctionDeleter.selectNextMember",
+        "key": "ctrl+shift+m",
+        "mac": "cmd+shift+m",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "variableFunctionDeleter.sortMembersAZ",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "variableFunctionDeleter.sortMembersZA",
+        "key": "ctrl+shift+z",
+        "mac": "cmd+shift+z",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "variableFunctionDeleter.selectNextMemberAdd",
+        "key": "ctrl+shift+alt+m",
+        "mac": "cmd+shift+alt+m",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "variableFunctionDeleter.moveMemberUp",
+        "key": "ctrl+shift+up",
+        "mac": "cmd+shift+up",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "variableFunctionDeleter.moveMemberDown",
+        "key": "ctrl+shift+down",
+        "mac": "cmd+shift+down",
         "when": "editorTextFocus"
       }
     ]
