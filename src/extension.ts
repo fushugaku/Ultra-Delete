@@ -1,6 +1,7 @@
 // extension.ts
 import * as vscode from 'vscode';
 import { ElementDetector } from './core/elementDetector';
+import { CommandHandler } from './core/CommandHandler';
 
 let elementDetector: ElementDetector;
 
@@ -569,118 +570,13 @@ function moveMemberDown() {
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  console.log('Activating Variable Function Deleter extension');
+  console.log('Ultra Delete extension is now active!');
 
   elementDetector = new ElementDetector();
+  const commandHandler = new CommandHandler(elementDetector);
 
-  // Register commands explicitly
-  const deleteCommand = vscode.commands.registerCommand(
-    'variableFunctionDeleter.deleteAtCursor',
-    () => {
-      console.log('Delete command executed');
-      executeAction('delete');
-    }
-  );
-
-  const cutCommand = vscode.commands.registerCommand(
-    'variableFunctionDeleter.cutAtCursor',
-    () => {
-      console.log('Cut command executed');
-      executeAction('cut');
-    }
-  );
-
-  // NEW COMMANDS
-  const selectFunctionScopeCommand = vscode.commands.registerCommand(
-    'variableFunctionDeleter.selectFunctionScope',
-    () => {
-      console.log('Select function scope command executed');
-      selectFunctionScope();
-    }
-  );
-
-  const goToNextMemberCommand = vscode.commands.registerCommand(
-    'variableFunctionDeleter.goToNextMember',
-    () => {
-      console.log('Go to next member command executed');
-      goToNextMember();
-    }
-  );
-
-  const selectNextMemberCommand = vscode.commands.registerCommand(
-    'variableFunctionDeleter.selectNextMember',
-    () => {
-      console.log('Select next member command executed');
-      selectNextMember();
-    }
-  );
-
-  const selectNextMemberAddCommand = vscode.commands.registerCommand(
-    'variableFunctionDeleter.selectNextMemberAdd',
-    () => {
-      console.log('Select next member add command executed');
-      selectNextMemberAdd();
-    }
-  );
-
-  const sortMembersAZCommand = vscode.commands.registerCommand(
-    'variableFunctionDeleter.sortMembersAZ',
-    () => {
-      console.log('Sort members A-Z command executed');
-      sortSelectedMembers(true);
-    }
-  );
-
-  const sortMembersZACommand = vscode.commands.registerCommand(
-    'variableFunctionDeleter.sortMembersZA',
-    () => {
-      console.log('Sort members Z-A command executed');
-      sortSelectedMembers(false);
-    }
-  );
-
-  const moveMemberUpCommand = vscode.commands.registerCommand(
-    'variableFunctionDeleter.moveMemberUp',
-    () => {
-      console.log('Move member up command executed');
-      moveMemberUp();
-    }
-  );
-
-  const moveMemberDownCommand = vscode.commands.registerCommand(
-    'variableFunctionDeleter.moveMemberDown',
-    () => {
-      console.log('Move member down command executed');
-      moveMemberDown();
-    }
-  );
-
-  // Add to subscriptions
-  context.subscriptions.push(deleteCommand);
-  context.subscriptions.push(cutCommand);
-  context.subscriptions.push(selectFunctionScopeCommand);
-  context.subscriptions.push(goToNextMemberCommand);
-  context.subscriptions.push(selectNextMemberCommand);
-  context.subscriptions.push(selectNextMemberAddCommand);
-  context.subscriptions.push(sortMembersAZCommand);
-  context.subscriptions.push(sortMembersZACommand);
-  context.subscriptions.push(moveMemberUpCommand);
-  context.subscriptions.push(moveMemberDownCommand);
-
-  // Verify commands are registered
-  vscode.commands.getCommands(true).then(commands => {
-    const hasDelete = commands.includes('variableFunctionDeleter.deleteAtCursor');
-    const hasCut = commands.includes('variableFunctionDeleter.cutAtCursor');
-    const hasSelectScope = commands.includes('variableFunctionDeleter.selectFunctionScope');
-    const hasGoToNext = commands.includes('variableFunctionDeleter.goToNextMember');
-    const hasSelectNext = commands.includes('variableFunctionDeleter.selectNextMember');
-    const hasSelectNextAdd = commands.includes('variableFunctionDeleter.selectNextMemberAdd');
-    const hasSortAZ = commands.includes('variableFunctionDeleter.sortMembersAZ');
-    const hasSortZA = commands.includes('variableFunctionDeleter.sortMembersZA');
-    const hasMoveUp = commands.includes('variableFunctionDeleter.moveMemberUp');
-    const hasMoveDown = commands.includes('variableFunctionDeleter.moveMemberDown');
-    console.log(`Commands registered - Delete: ${hasDelete}, Cut: ${hasCut}, SelectScope: ${hasSelectScope}, GoToNext: ${hasGoToNext}, SelectNext: ${hasSelectNext}, SelectNextAdd: ${hasSelectNextAdd}, SortAZ: ${hasSortAZ}, SortZA: ${hasSortZA}, MoveUp: ${hasMoveUp}, MoveDown: ${hasMoveDown}`);
-  });
+  // Register all commands through the command handler
+  commandHandler.registerCommands(context);
 
   console.log('Extension activated successfully');
 }

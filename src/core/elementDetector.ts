@@ -11,6 +11,7 @@ import { CppHandler } from '../languages/cpp';
 import { GoHandler } from '../languages/go';
 import { RustHandler } from '../languages/rust';
 import { TypeScriptHandler } from '../languages/typescript';
+import { TypeScriptHandlerRefactored } from '../languages/typescript/TypeScriptHandlerRefactored';
 
 export class ElementDetector {
   private handlers: Map<string, LanguageHandler> = new Map();

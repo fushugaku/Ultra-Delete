@@ -5,6 +5,11 @@ import { BaseLanguageHandler, ElementType } from './base/baseLanguage';
 
 /**
  * TypeScript language handler for intelligent code element detection and manipulation
+ * 
+ * Note: This file combines AST parsing and VSCode action logic.
+ * Consider splitting into separate files for better maintainability:
+ * - astParser.ts: Pure TypeScript AST parsing logic
+ * - vscodeHandler.ts: VSCode-specific actions and UI logic
  */
 export class TypeScriptHandler extends BaseLanguageHandler {
   languageIds = ['typescript', 'tsx', 'typescriptreact', 'javascript', 'jsx', 'javascriptreact'];
@@ -303,22 +308,22 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   /**
- * Check if a selection intersects with the first line of a member (simple line-based approach)
+ * Check if a selection intersects with a member's range
  */
   private selectionIntersectsWithMemberLine(
     selection: vscode.Selection,
     member: { range: vscode.Range, text: string, name: string }
   ): boolean {
-    // Simple approach: check if cursor line intersects with the first line of the member
-    // This covers most cases and is much more reliable than complex AST parsing
+    // Check if cursor line is anywhere within the member's range
     const selectionStartLine = selection.start.line;
     const selectionEndLine = selection.end.line;
     const memberStartLine = member.range.start.line;
+    const memberEndLine = member.range.end.line;
 
-    console.log(`  Checking selection lines ${selectionStartLine + 1}-${selectionEndLine + 1} vs member "${member.name}" start line ${memberStartLine + 1}`);
+    console.log(`  Checking selection lines ${selectionStartLine + 1}-${selectionEndLine + 1} vs member "${member.name}" range ${memberStartLine + 1}-${memberEndLine + 1}`);
 
-    // Check if the selection overlaps with the member's first line
-    const intersects = memberStartLine >= selectionStartLine && memberStartLine <= selectionEndLine;
+    // Check if the selection overlaps with any part of the member's range
+    const intersects = !(selectionEndLine < memberStartLine || selectionStartLine > memberEndLine);
 
     if (intersects) {
       console.log(`  ✓ Selection intersects with member "${member.name}"`);
@@ -666,19 +671,23 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     const blockRange = new vscode.Range(blockStart, blockEnd);
     const completeBlockText = document.getText(blockRange);
 
-    // Create the edit and handle selection restoration in the then callback
-    editor.edit(editBuilder => {
-      // Replace the target member with the complete block (including spacing)
-      editBuilder.replace(targetMember.range, completeBlockText);
+    // Calculate where the block will end up (at the target member's position)
+    const newBlockStart = targetMember.range.start;
 
+    // Create the edit and handle cursor positioning
+    editor.edit(editBuilder => {
+      // Replace the target member with the complete block
+      editBuilder.replace(targetMember.range, completeBlockText);
       // Replace the block with the target member
       editBuilder.replace(blockRange, targetMember.text);
     }).then((success) => {
       if (success) {
-        // Wait for document update and restore selections using AST
-        // setTimeout(() => {
-        this.restoreSelectionsAfterMoveUsingAST(document, selectionInfo);
-        // }, 10);
+        // Position cursor at the declaration of the first moved member
+        const firstMemberName = selectedMembers[0].name;
+        const targetPosition = this.findMemberDeclarationPosition(document, firstMemberName, newBlockStart.line, newBlockStart.character);
+        editor.selection = new vscode.Selection(targetPosition, targetPosition);
+        editor.revealRange(new vscode.Range(targetPosition, targetPosition), vscode.TextEditorRevealType.InCenter);
+        console.log(`✓ Positioned cursor at moved block: line ${targetPosition.line + 1}`);
       }
     });
   }
@@ -705,19 +714,24 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     const blockRange = new vscode.Range(blockStart, blockEnd);
     const completeBlockText = document.getText(blockRange);
 
-    // Create the edit and handle selection restoration in the then callback
+    // Calculate where the block will end up after the swap
+    // When moving down: the block will end up exactly where the target member was
+    const newBlockStart = targetMember.range.start;
+
+    // Create the edit and handle cursor positioning
     editor.edit(editBuilder => {
       // Replace the block with the target member
       editBuilder.replace(blockRange, targetMember.text);
-
-      // Replace the target member with the complete block (including spacing)
+      // Replace the target member with the complete block
       editBuilder.replace(targetMember.range, completeBlockText);
     }).then((success) => {
       if (success) {
-        // Wait for document update and restore selections using AST
-        // setTimeout(() => {
-        this.restoreSelectionsAfterMoveUsingAST(document, selectionInfo);
-        // }, 10);
+        // Position cursor at the declaration of the first moved member  
+        const firstMemberName = selectedMembers[0].name;
+        const targetPosition = this.findMemberDeclarationPosition(document, firstMemberName, newBlockStart.line, newBlockStart.character);
+        editor.selection = new vscode.Selection(targetPosition, targetPosition);
+        editor.revealRange(new vscode.Range(targetPosition, targetPosition), vscode.TextEditorRevealType.InCenter);
+        console.log(`✓ Positioned cursor at moved block: line ${targetPosition.line + 1}`);
       }
     });
   }
@@ -1270,319 +1284,54 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       throw new Error('No active editor or document mismatch');
     }
 
-    console.log(`\n=== SWAPPING MEMBERS DEBUG ===`);
+    console.log(`\n=== SWAPPING MEMBERS ===`);
     console.log(`Moving member "${memberA.name}" ${direction}`);
-    console.log(`MemberA range: ${memberA.range.start.line}:${memberA.range.start.character} - ${memberA.range.end.line}:${memberA.range.end.character}`);
-    console.log(`MemberB range: ${memberB.range.start.line}:${memberB.range.start.character} - ${memberB.range.end.line}:${memberB.range.end.character}`);
+    console.log(`MemberA range: ${memberA.range.start.line + 1}-${memberA.range.end.line + 1}`);
+    console.log(`MemberB range: ${memberB.range.start.line + 1}-${memberB.range.end.line + 1}`);
 
-    // Store the target area where memberA should end up (memberB's current location)
+    // Calculate where memberA will end up after the swap
     const targetStartLine = memberB.range.start.line;
-
-    // Calculate how many lines memberA has
-    const memberALines = memberA.range.end.line - memberA.range.start.line + 1;
-
-    // The target end should be based on how big memberA is, not how big memberB is
-    const targetEndLine = targetStartLine + memberALines - 1;
-
-    console.log(`MemberA has ${memberALines} lines`);
-    console.log(`Target area: lines ${targetStartLine + 1} to ${targetEndLine + 1} (where memberA will be placed)`);
+    const targetStartCharacter = memberB.range.start.character;
 
     // Determine which member comes first in the document
     const firstMember = memberA.range.start.isBefore(memberB.range.start) ? memberA : memberB;
     const secondMember = firstMember === memberA ? memberB : memberA;
 
-    console.log(`First member: "${firstMember.name}", Second member: "${secondMember.name}"`);
-
     // Perform the swap using editor.edit
     const editPromise = editor.edit(editBuilder => {
       // Replace in reverse order to avoid position shifts
       if (firstMember.range.start.isBefore(secondMember.range.start)) {
-        // Second member is after first member
-        console.log(`Replacing second member with first member text`);
         editBuilder.replace(secondMember.range, firstMember.text);
-        console.log(`Replacing first member with second member text`);
         editBuilder.replace(firstMember.range, secondMember.text);
       } else {
-        // First member is after second member (shouldn't happen but just in case)
-        console.log(`Replacing first member with second member text`);
         editBuilder.replace(firstMember.range, secondMember.text);
-        console.log(`Replacing second member with first member text`);
         editBuilder.replace(secondMember.range, firstMember.text);
       }
     });
 
-    // Return a promise-like structure that will resolve to the new position
-    editPromise.then(() => {
-      // After the edit completes, find the moved member in the target area
-      // setTimeout(() => {
-      console.log(`Edit completed, finding moved member...`);
-      this.findMovedMemberAndPositionCursor(document, memberA.name, targetStartLine, targetEndLine);
-      // }, 10);
+    // Position cursor after the edit completes
+    editPromise.then((success) => {
+      if (success) {
+        // Find the actual declaration position within the moved member
+        const targetPosition = this.findMemberDeclarationPosition(document, memberA.name, targetStartLine, targetStartCharacter);
+
+        editor.selection = new vscode.Selection(targetPosition, targetPosition);
+        editor.revealRange(new vscode.Range(targetPosition, targetPosition), vscode.TextEditorRevealType.InCenter);
+        console.log(`✓ Positioned cursor at line ${targetPosition.line + 1}, character ${targetPosition.character + 1}`);
+      }
     });
 
-    // For immediate return, estimate position at target start
-    return { newPosition: new vscode.Position(targetStartLine, 0), moved: true };
+    // For immediate return, return the target position
+    return { newPosition: new vscode.Position(targetStartLine, targetStartCharacter), moved: true };
   }
 
-  /**
-   * Find a member by name and position the cursor on it
-   */
-  private findMemberAndPositionCursor(document: vscode.TextDocument, memberName: string): void {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor || editor.document !== document) {
-      return;
-    }
 
-    try {
-      console.log(`\n=== POSITIONING CURSOR ON "${memberName}" ===`);
 
-      // Instead of using current cursor position, search for the scope that contains the target member
-      // Try multiple search positions to find the right scope
-      const searchPositions = [
-        // Try from the beginning of the file area where we expect the scope
-        new vscode.Position(0, 0),
-        new vscode.Position(10, 0),
-        new vscode.Position(15, 0),
-        new vscode.Position(20, 0),
-        new vscode.Position(25, 0),
-        new vscode.Position(30, 0),
-        new vscode.Position(35, 0),
-        new vscode.Position(40, 0),
-      ];
 
-      let foundMember: { range: vscode.Range, text: string, name: string } | undefined;
 
-      for (const searchPos of searchPositions) {
-        try {
-          const members = this.getMembersInCurrentScope(document, searchPos);
-          console.log(`Searching at ${searchPos.line}:${searchPos.character} - found ${members.length} members:`, members.map(m => m.name));
 
-          const targetMember = members.find(member => member.name === memberName);
-          if (targetMember) {
-            // Additional check: make sure this is actually a declaration, not just a reference
-            if (this.isActualDeclaration(targetMember.text.trim(), memberName)) {
-              console.log(`Found actual declaration of "${memberName}" at line ${targetMember.range.start.line + 1}`);
-              foundMember = targetMember;
-              break;
-            } else {
-              console.log(`Found "${memberName}" but it's not a declaration, continuing search...`);
-            }
-          }
-        } catch (error) {
-          // Continue searching
-        }
-      }
 
-      if (foundMember) {
-        // Position cursor at the start of the found member
-        const newPosition = foundMember.range.start;
-        const newSelection = new vscode.Selection(newPosition, newPosition);
 
-        // Update selection and reveal the position
-        editor.selection = newSelection;
-        editor.revealRange(foundMember.range, vscode.TextEditorRevealType.InCenter);
-
-        console.log(`✓ Positioned cursor on moved member "${memberName}" at line ${newPosition.line + 1}, column ${newPosition.character + 1}`);
-      } else {
-        console.log(`✗ Could not find declaration of "${memberName}" in any scope`);
-
-        // Fallback: try to find the member by searching the document text for declaration patterns
-        const memberText = document.getText();
-        const lines = memberText.split('\n');
-
-        // Look for declaration patterns instead of just any occurrence
-        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-          const line = lines[lineIndex];
-
-          // Check various declaration patterns
-          if (this.isVariableDeclaration(line.trim(), memberName) ||
-            this.isFunctionDeclaration(line.trim(), memberName) ||
-            this.isPropertyDeclaration(line.trim(), memberName)) {
-
-            const fallbackPosition = new vscode.Position(lineIndex, 0);
-            editor.selection = new vscode.Selection(fallbackPosition, fallbackPosition);
-            console.log(`Fallback: positioned cursor at declaration pattern of "${memberName}" at line ${fallbackPosition.line + 1}`);
-            return;
-          }
-        }
-
-        console.log(`No declaration pattern found for "${memberName}"`);
-      }
-    } catch (error) {
-      console.error('Error positioning cursor after member move:', error);
-    }
-  }
-
-  /**
- * Find a member by name at a specific location and position the cursor on it
- */
-  private findMemberAndPositionCursorAtLocation(
-    document: vscode.TextDocument,
-    memberName: string,
-    expectedLocation: vscode.Range
-  ): void {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor || editor.document !== document) {
-      return;
-    }
-
-    try {
-      console.log(`\n=== POSITIONING CURSOR ON "${memberName}" AT EXPECTED LOCATION ${expectedLocation.start.line + 1}:${expectedLocation.start.character + 1} ===`);
-
-      // Search around the expected location for the scope
-      const searchPositions = [
-        // Start with the expected location
-        expectedLocation.start,
-        // Try some positions around the expected location
-        new vscode.Position(Math.max(0, expectedLocation.start.line - 2), 0),
-        new vscode.Position(expectedLocation.start.line + 2, 0),
-        new vscode.Position(Math.max(0, expectedLocation.start.line - 5), 0),
-        new vscode.Position(expectedLocation.start.line + 5, 0),
-      ];
-
-      let foundMember: { range: vscode.Range, text: string, name: string } | undefined;
-      let bestMember: { range: vscode.Range, text: string, name: string } | undefined;
-      let bestDistance = Number.MAX_SAFE_INTEGER;
-
-      for (const searchPos of searchPositions) {
-        try {
-          const members = this.getMembersInCurrentScope(document, searchPos);
-          console.log(`Searching at ${searchPos.line}:${searchPos.character} - found ${members.length} members:`, members.map(m => m.name));
-
-          // Find all members with the target name
-          const candidates = members.filter(member => member.name === memberName);
-
-          for (const candidate of candidates) {
-            // Additional check: make sure this is actually a declaration, not just a reference
-            if (this.isActualDeclaration(candidate.text.trim(), memberName)) {
-              console.log(`Found declaration candidate of "${memberName}" at line ${candidate.range.start.line + 1}`);
-
-              // Calculate distance from expected location
-              const distance = Math.abs(candidate.range.start.line - expectedLocation.start.line);
-              console.log(`Distance from expected location: ${distance}`);
-
-              if (distance < bestDistance) {
-                bestDistance = distance;
-                bestMember = candidate;
-              }
-
-              // If this candidate is very close to the expected location, use it immediately
-              if (distance <= 2) {
-                foundMember = candidate;
-                break;
-              }
-            }
-          }
-
-          if (foundMember) {
-            break;
-          }
-        } catch (error) {
-          // Continue searching
-        }
-      }
-
-      // Use the best member we found if no exact match
-      if (!foundMember && bestMember) {
-        foundMember = bestMember;
-        console.log(`Using best candidate at distance ${bestDistance} from expected location`);
-      }
-
-      if (foundMember) {
-        // Position cursor at the start of the found member
-        const newPosition = foundMember.range.start;
-        const newSelection = new vscode.Selection(newPosition, newPosition);
-
-        // Update selection and reveal the position
-        editor.selection = newSelection;
-        editor.revealRange(foundMember.range, vscode.TextEditorRevealType.InCenter);
-
-        console.log(`✓ Positioned cursor on moved member "${memberName}" at line ${newPosition.line + 1}, column ${newPosition.character + 1}`);
-      } else {
-        console.log(`✗ Could not find declaration of "${memberName}" near expected location`);
-
-        // Fallback to the old method
-        this.findMemberAndPositionCursor(document, memberName);
-      }
-    } catch (error) {
-      console.error('Error positioning cursor after member move:', error);
-
-      // Fallback to the old method
-      this.findMemberAndPositionCursor(document, memberName);
-    }
-  }
-
-  /**
-   * Position cursor at an exact location without searching
-   */
-  private positionCursorAtExactLocation(document: vscode.TextDocument, position: vscode.Position): void {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor || editor.document !== document) {
-      return;
-    }
-
-    try {
-      console.log(`\n=== POSITIONING CURSOR AT EXACT LOCATION ${position.line + 1}:${position.character + 1} ===`);
-
-      // Create selection at the exact position
-      const newSelection = new vscode.Selection(position, position);
-
-      // Update selection and reveal the position
-      editor.selection = newSelection;
-      editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
-
-      console.log(`✓ Positioned cursor at exact location line ${position.line + 1}, column ${position.character + 1}`);
-    } catch (error) {
-      console.error('Error positioning cursor at exact location:', error);
-    }
-  }
-
-  /**
-   * Position cursor at an exact location with debug information
-   */
-  private positionCursorAtExactLocationWithDebug(document: vscode.TextDocument, position: vscode.Position, memberName: string): void {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor || editor.document !== document) {
-      console.log(`✗ No active editor or document mismatch`);
-      return;
-    }
-
-    try {
-      console.log(`\n=== POSITIONING CURSOR WITH DEBUG ===`);
-      console.log(`Target member: "${memberName}"`);
-      console.log(`Target position: ${position.line + 1}:${position.character + 1}`);
-
-      // Check what's at that position
-      if (position.line < document.lineCount) {
-        const line = document.lineAt(position.line);
-        console.log(`Line ${position.line + 1} content: "${line.text}"`);
-        console.log(`Character at position: "${position.character < line.text.length ? line.text[position.character] : 'END_OF_LINE'}"`);
-
-        // Show some context around the position
-        const contextStart = Math.max(0, position.line - 2);
-        const contextEnd = Math.min(document.lineCount - 1, position.line + 2);
-        console.log(`Context (lines ${contextStart + 1}-${contextEnd + 1}):`);
-        for (let i = contextStart; i <= contextEnd; i++) {
-          const contextLine = document.lineAt(i);
-          const marker = i === position.line ? ' >>> ' : '     ';
-          console.log(`${marker}${i + 1}: ${contextLine.text}`);
-        }
-      } else {
-        console.log(`✗ Position ${position.line + 1} is beyond document length (${document.lineCount} lines)`);
-      }
-
-      // Create selection at the exact position
-      const newSelection = new vscode.Selection(position, position);
-
-      // Update selection and reveal the position
-      editor.selection = newSelection;
-      editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
-
-      console.log(`✓ Positioned cursor at line ${position.line + 1}, column ${position.character + 1}`);
-    } catch (error) {
-      console.error('Error positioning cursor with debug:', error);
-    }
-  }
 
   /**
  * Find the moved member using AST and position cursor on it
@@ -1770,6 +1519,291 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     editor.revealRange(new vscode.Range(namePosition, namePosition), vscode.TextEditorRevealType.InCenter);
 
     console.log(`✓ Positioned cursor on declaration of "${memberName}" at line ${namePosition.line + 1}, column ${namePosition.character + 1}`);
+  }
+
+  /**
+ * Find the exact declaration position of a member within a given area
+ */
+  private findMemberDeclarationPosition(
+    document: vscode.TextDocument,
+    memberName: string,
+    startLine: number,
+    startCharacter: number
+  ): vscode.Position {
+    try {
+      // Search in a much wider area since positions can shift significantly after edits
+      const searchStartLine = Math.max(0, startLine - 10);
+      const searchEndLine = Math.min(startLine + 30, document.lineCount - 1);
+
+      console.log(`Searching for "${memberName}" declaration in lines ${searchStartLine + 1}-${searchEndLine + 1} (expected around line ${startLine + 1})`);
+
+      // First try simple text search as it's more reliable after document edits
+      const textPosition = this.findMemberByTextSearch(document, memberName, searchStartLine, searchEndLine);
+      if (textPosition) {
+        console.log(`Found "${memberName}" by text search at line ${textPosition.line + 1}, char ${textPosition.character + 1}`);
+        return textPosition;
+      }
+
+      // If text search fails, try AST search with full document parsing
+      console.log(`Text search failed, trying AST search for "${memberName}"`);
+      const astPosition = this.findMemberByAST(document, memberName, startLine);
+      if (astPosition) {
+        console.log(`Found "${memberName}" by AST search at line ${astPosition.line + 1}, char ${astPosition.character + 1}`);
+        return astPosition;
+      }
+
+      console.log(`Could not find declaration for "${memberName}", using fallback position`);
+    } catch (error) {
+      console.log(`Error finding declaration position for "${memberName}":`, error);
+    }
+
+    // Fallback to original position
+    return new vscode.Position(startLine, startCharacter);
+  }
+
+  /**
+   * Find member using AST on the full document
+   */
+  private findMemberByAST(
+    document: vscode.TextDocument,
+    memberName: string,
+    expectedLine: number
+  ): vscode.Position | null {
+    try {
+      const sourceFile = this.createSourceFile(document);
+
+      // Find all declarations with the target name
+      const declarations = this.findAllDeclarationsWithName(sourceFile, memberName);
+
+      if (declarations.length === 0) {
+        // Try call expressions
+        const callExpressions = this.findAllCallExpressionsWithName(sourceFile, memberName);
+        if (callExpressions.length > 0) {
+          return document.positionAt(callExpressions[0].getStart());
+        }
+        return null;
+      }
+
+      if (declarations.length === 1) {
+        return document.positionAt(declarations[0].getStart());
+      }
+
+      // Multiple declarations - find the closest to expected line
+      let bestDeclaration = declarations[0];
+      let bestDistance = Number.MAX_SAFE_INTEGER;
+
+      for (const declaration of declarations) {
+        const declarationLine = document.positionAt(declaration.getStart()).line;
+        const distance = Math.abs(declarationLine - expectedLine);
+
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestDeclaration = declaration;
+        }
+      }
+
+      return document.positionAt(bestDeclaration.getStart());
+    } catch (error) {
+      console.log(`AST search error for "${memberName}":`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Convert search-relative offset to document position
+   */
+  private convertSearchOffsetToDocumentPosition(
+    searchText: string,
+    offsetInSearch: number,
+    searchStartLine: number,
+    searchStartCharacter: number
+  ): vscode.Position | null {
+    const lines = searchText.split('\n');
+    let currentOffset = 0;
+
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      const lineLength = lines[lineIndex].length + 1; // +1 for newline
+
+      if (currentOffset <= offsetInSearch && offsetInSearch < currentOffset + lineLength) {
+        const declarationLine = searchStartLine + lineIndex;
+        const declarationChar = searchStartCharacter + (offsetInSearch - currentOffset);
+        return new vscode.Position(declarationLine, declarationChar);
+      }
+
+      currentOffset += lineLength;
+    }
+
+    return null;
+  }
+
+  /**
+ * Find member by simple text search as fallback
+ */
+  private findMemberByTextSearch(
+    document: vscode.TextDocument,
+    memberName: string,
+    startLine: number,
+    endLine: number
+  ): vscode.Position | null {
+    console.log(`Text search for "${memberName}" in lines ${startLine + 1}-${endLine + 1}`);
+
+    // Search line by line for better debugging
+    for (let lineNum = startLine; lineNum <= endLine && lineNum < document.lineCount; lineNum++) {
+      const line = document.lineAt(lineNum);
+      const lineText = line.text;
+
+      // Log each line we're checking
+      if (lineText.includes(memberName)) {
+        console.log(`  Line ${lineNum + 1}: ${lineText.trim()}`);
+
+        const position = this.findMemberInLine(lineText, memberName, lineNum);
+        if (position) {
+          console.log(`  ✓ Found "${memberName}" at line ${position.line + 1}, char ${position.character + 1}`);
+          return position;
+        }
+      }
+    }
+
+    console.log(`  ✗ No text matches found for "${memberName}"`);
+    return null;
+  }
+
+  /**
+   * Find member declaration in a single line using string operations
+   */
+  private findMemberInLine(lineText: string, memberName: string, lineNum: number): vscode.Position | null {
+    const trimmed = lineText.trim();
+
+    // Check for variable declarations: const memberName =, let memberName =, var memberName =
+    if (this.isVariableDeclarationLine(trimmed, memberName)) {
+      const nameIndex = this.findMemberNameIndex(lineText, memberName, 'const', 'let', 'var');
+      if (nameIndex !== -1) {
+        return new vscode.Position(lineNum, nameIndex);
+      }
+    }
+
+    // Check for function declarations: function memberName(, async function memberName(
+    if (this.isFunctionDeclarationLine(trimmed, memberName)) {
+      const nameIndex = this.findMemberNameIndex(lineText, memberName, 'function');
+      if (nameIndex !== -1) {
+        return new vscode.Position(lineNum, nameIndex);
+      }
+    }
+
+    // Check for call expressions: memberName(
+    if (this.isCallExpressionLine(trimmed, memberName)) {
+      const nameIndex = this.findCallExpressionNameIndex(lineText, memberName);
+      if (nameIndex !== -1) {
+        return new vscode.Position(lineNum, nameIndex);
+      }
+    }
+
+    // Check for object properties: memberName:
+    if (this.isObjectPropertyLine(trimmed, memberName)) {
+      const nameIndex = this.findObjectPropertyNameIndex(lineText, memberName);
+      if (nameIndex !== -1) {
+        return new vscode.Position(lineNum, nameIndex);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if line contains a variable declaration for the member
+   */
+  private isVariableDeclarationLine(trimmed: string, memberName: string): boolean {
+    return (trimmed.startsWith('const ') || trimmed.startsWith('let ') || trimmed.startsWith('var ')) &&
+      trimmed.includes(memberName) &&
+      (trimmed.includes('=') || trimmed.includes(':'));
+  }
+
+  /**
+   * Check if line contains a function declaration for the member
+   */
+  private isFunctionDeclarationLine(trimmed: string, memberName: string): boolean {
+    return (trimmed.startsWith('function ') || trimmed.startsWith('async function ')) &&
+      trimmed.includes(memberName) &&
+      trimmed.includes('(');
+  }
+
+  /**
+   * Check if line contains a call expression for the member
+   */
+  private isCallExpressionLine(trimmed: string, memberName: string): boolean {
+    return trimmed.startsWith(memberName + '(');
+  }
+
+  /**
+   * Check if line contains an object property for the member
+   */
+  private isObjectPropertyLine(trimmed: string, memberName: string): boolean {
+    return trimmed.startsWith(memberName + ':') ||
+      (trimmed.includes(memberName + ':') && trimmed.indexOf(memberName + ':') < 50); // Allow some indentation
+  }
+
+  /**
+   * Find the index of the member name after certain keywords
+   */
+  private findMemberNameIndex(lineText: string, memberName: string, ...keywords: string[]): number {
+    for (const keyword of keywords) {
+      const keywordIndex = lineText.indexOf(keyword);
+      if (keywordIndex !== -1) {
+        // Look for the member name after the keyword
+        const afterKeyword = lineText.substring(keywordIndex + keyword.length);
+        const nameInAfterKeyword = afterKeyword.indexOf(memberName);
+
+        if (nameInAfterKeyword !== -1) {
+          // Check if it's a word boundary (not part of another identifier)
+          const absoluteIndex = keywordIndex + keyword.length + nameInAfterKeyword;
+          if (this.isValidMemberNameBoundary(lineText, absoluteIndex, memberName)) {
+            return absoluteIndex;
+          }
+        }
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Find the index of the member name in a call expression
+   */
+  private findCallExpressionNameIndex(lineText: string, memberName: string): number {
+    const nameIndex = lineText.indexOf(memberName);
+    if (nameIndex !== -1 && this.isValidMemberNameBoundary(lineText, nameIndex, memberName)) {
+      // Check if it's followed by an opening parenthesis
+      const afterName = lineText.substring(nameIndex + memberName.length).trim();
+      if (afterName.startsWith('(')) {
+        return nameIndex;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Find the index of the member name in an object property
+   */
+  private findObjectPropertyNameIndex(lineText: string, memberName: string): number {
+    const nameIndex = lineText.indexOf(memberName);
+    if (nameIndex !== -1 && this.isValidMemberNameBoundary(lineText, nameIndex, memberName)) {
+      // Check if it's followed by a colon
+      const afterName = lineText.substring(nameIndex + memberName.length).trim();
+      if (afterName.startsWith(':')) {
+        return nameIndex;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Check if the member name at the given index has valid word boundaries
+   */
+  private isValidMemberNameBoundary(lineText: string, index: number, memberName: string): boolean {
+    const before = index > 0 ? lineText[index - 1] : ' ';
+    const after = index + memberName.length < lineText.length ? lineText[index + memberName.length] : ' ';
+
+    // Check that it's not part of another identifier
+    return !this.isIdentifierChar(before) && !this.isIdentifierChar(after);
   }
 
   /**
