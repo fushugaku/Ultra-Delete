@@ -513,9 +513,9 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       editBuilder.replace(blockRange, targetMember.text);
     }).then((success) => {
       if (success) {
-        // Wait for document update and restore selections
+        // Wait for document update and restore selections using AST
         // setTimeout(() => {
-        this.restoreSelectionsAfterMoveByMemberNames(document, selectionInfo, originalScope, searchContext);
+        this.restoreSelectionsAfterMoveUsingAST(document, selectionInfo);
         // }, 10);
       }
     });
@@ -552,9 +552,9 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       editBuilder.replace(targetMember.range, completeBlockText);
     }).then((success) => {
       if (success) {
-        // Wait for document update and restore selections
+        // Wait for document update and restore selections using AST
         // setTimeout(() => {
-        this.restoreSelectionsAfterMoveByMemberNames(document, selectionInfo, originalScope, searchContext);
+        this.restoreSelectionsAfterMoveUsingAST(document, selectionInfo);
         // }, 10);
       }
     });
@@ -679,6 +679,80 @@ export class TypeScriptHandler extends BaseLanguageHandler {
       }
     } catch (error) {
       console.error('Error restoring selections after move:', error);
+    }
+  }
+
+  /**
+   * Restore selections after move using AST-based approach
+   */
+  private restoreSelectionsAfterMoveUsingAST(
+    document: vscode.TextDocument,
+    selectionInfo: { memberName: string, relativeStart: number, relativeEnd: number }[]
+  ): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document !== document) {
+      return;
+    }
+
+    try {
+      console.log(`\n=== RESTORING SELECTIONS USING AST ===`);
+      console.log(`Restoring selections for ${selectionInfo.length} members:`);
+      selectionInfo.forEach(info => {
+        console.log(`  Member: "${info.memberName}"`);
+      });
+
+      // Parse the updated document
+      const sourceFile = this.createSourceFile(document);
+      const newSelections: vscode.Selection[] = [];
+
+      // Find each member using AST and restore its selection
+      for (const selInfo of selectionInfo) {
+        console.log(`\nFinding "${selInfo.memberName}" using AST...`);
+
+        // Find all declaration nodes that match the member name
+        const matchingDeclarations = this.findAllDeclarationsWithName(sourceFile, selInfo.memberName);
+
+        if (matchingDeclarations.length === 0) {
+          console.log(`✗ No declaration nodes found for "${selInfo.memberName}"`);
+          continue;
+        }
+
+        // If multiple declarations, take the first one (they should be unique in scope)
+        const declaration = matchingDeclarations[0];
+        console.log(`✓ Found declaration for "${selInfo.memberName}" at position ${document.positionAt(declaration.getStart()).line + 1}`);
+
+        // Get the start position of the declaration
+        const declarationStart = document.positionAt(declaration.getStart());
+        const declarationEnd = document.positionAt(declaration.getEnd());
+
+        // Calculate the selection position relative to the declaration start
+        const memberStartOffset = document.offsetAt(declarationStart);
+        const newSelectionStartOffset = memberStartOffset + selInfo.relativeStart;
+        const newSelectionEndOffset = memberStartOffset + selInfo.relativeEnd;
+
+        // Ensure we don't go beyond the member bounds
+        const memberEndOffset = document.offsetAt(declarationEnd);
+        const clampedStartOffset = Math.max(memberStartOffset, Math.min(newSelectionStartOffset, memberEndOffset));
+        const clampedEndOffset = Math.max(memberStartOffset, Math.min(newSelectionEndOffset, memberEndOffset));
+
+        const newStart = document.positionAt(clampedStartOffset);
+        const newEnd = document.positionAt(clampedEndOffset);
+
+        newSelections.push(new vscode.Selection(newStart, newEnd));
+        console.log(`✓ Added selection for "${selInfo.memberName}" at ${newStart.line + 1}:${newStart.character}-${newEnd.line + 1}:${newEnd.character}`);
+      }
+
+      // Apply the new selections
+      if (newSelections.length > 0) {
+        editor.selections = newSelections;
+        // Center on the first selection (the moved block)
+        editor.revealRange(newSelections[0], vscode.TextEditorRevealType.InCenter);
+        console.log(`✓ Applied ${newSelections.length} selections`);
+      } else {
+        console.log(`✗ No selections could be restored`);
+      }
+    } catch (error) {
+      console.error('Error restoring selections using AST:', error);
     }
   }
 
@@ -1349,7 +1423,7 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   /**
- * Find the moved member in the target area and position cursor on it
+ * Find the moved member using AST and position cursor on it
  */
   private findMovedMemberAndPositionCursor(
     document: vscode.TextDocument,
@@ -1364,130 +1438,172 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     }
 
     try {
-      console.log(`\n=== FINDING MOVED MEMBER ===`);
-      console.log(`Looking for "${memberName}" around target area starting at line ${targetStartLine + 1}`);
+      console.log(`\n=== FINDING MOVED MEMBER USING AST ===`);
+      console.log(`Looking for "${memberName}" declaration using TypeScript AST`);
 
-      // Search in a broader area around the target location
-      // Start a bit before the target and search further down
-      const searchStartLine = Math.max(0, targetStartLine - 2);
-      const searchEndLine = Math.min(targetStartLine + 20, document.lineCount - 1);
+      // Parse the updated document
+      const sourceFile = this.createSourceFile(document);
 
-      console.log(`Searching from line ${searchStartLine + 1} to ${searchEndLine + 1}`);
+      // Find all declaration nodes that match the member name
+      const matchingDeclarations = this.findAllDeclarationsWithName(sourceFile, memberName);
 
-      for (let lineIndex = searchStartLine; lineIndex <= searchEndLine; lineIndex++) {
-        const line = document.lineAt(lineIndex);
-        const lineText = line.text;
+      console.log(`Found ${matchingDeclarations.length} declaration nodes with name "${memberName}"`);
 
-        console.log(`Checking line ${lineIndex + 1}: "${lineText}"`);
+      if (matchingDeclarations.length === 0) {
+        console.log(`✗ No declaration nodes found for "${memberName}"`);
+        this.fallbackToTargetArea(document, targetStartLine);
+        return;
+      }
 
-        // Simple checks without regex
-        let foundPosition: vscode.Position | null = null;
+      // If only one declaration, use it
+      if (matchingDeclarations.length === 1) {
+        const declaration = matchingDeclarations[0];
+        this.positionCursorOnDeclaration(document, declaration, memberName);
+        return;
+      }
 
-        if (memberName === 'constructor') {
-          const constructorIndex = lineText.indexOf('constructor');
-          if (constructorIndex >= 0) {
-            foundPosition = new vscode.Position(lineIndex, constructorIndex);
-            console.log(`Found constructor at line ${lineIndex + 1}, column ${constructorIndex + 1}`);
-          }
-        } else {
-          // Look for the member name in the line
-          const nameIndex = lineText.indexOf(memberName);
-          if (nameIndex >= 0) {
-            // Check if this looks like a declaration (not just a reference)
-            const beforeName = lineText.substring(0, nameIndex);
-            const afterName = lineText.substring(nameIndex + memberName.length);
+      // Multiple declarations found - find the one closest to the target area
+      console.log(`Multiple declarations found, selecting closest to target area (line ${targetStartLine + 1})`);
 
-            // Simple heuristics to identify declarations
-            const isDeclaration =
-              beforeName.includes('function ') ||
-              beforeName.includes('const ') ||
-              beforeName.includes('let ') ||
-              beforeName.includes('var ') ||
-              beforeName.includes('public ') ||
-              beforeName.includes('private ') ||
-              beforeName.includes('protected ') ||
-              beforeName.includes('static ') ||
-              afterName.startsWith('(') ||
-              afterName.startsWith(':');
+      let bestDeclaration = matchingDeclarations[0];
+      let bestDistance = Number.MAX_SAFE_INTEGER;
 
-            if (isDeclaration) {
-              foundPosition = new vscode.Position(lineIndex, nameIndex);
-              console.log(`Found member declaration at line ${lineIndex + 1}, column ${nameIndex + 1}`);
-            } else {
-              console.log(`Found member name but doesn't look like declaration (line: "${lineText}")`);
-            }
-          }
-        }
+      for (const declaration of matchingDeclarations) {
+        const declarationLine = document.positionAt(declaration.getStart()).line;
+        const distance = Math.abs(declarationLine - targetStartLine);
 
-        if (foundPosition) {
-          // Position cursor at the found location
-          const newSelection = new vscode.Selection(foundPosition, foundPosition);
-          editor.selection = newSelection;
-          editor.revealRange(new vscode.Range(foundPosition, foundPosition), vscode.TextEditorRevealType.InCenter);
+        console.log(`Declaration at line ${declarationLine + 1}, distance: ${distance}`);
 
-          console.log(`✓ Positioned cursor on moved member "${memberName}" at line ${foundPosition.line + 1}, column ${foundPosition.character + 1}`);
-          return;
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestDeclaration = declaration;
         }
       }
 
-      console.log(`✗ Could not find moved member "${memberName}" in search area`);
+      console.log(`Selected declaration at line ${document.positionAt(bestDeclaration.getStart()).line + 1} (distance: ${bestDistance})`);
+      this.positionCursorOnDeclaration(document, bestDeclaration, memberName);
 
-      // Enhanced fallback: search the whole document for the member
-      console.log(`Fallback: searching entire document for "${memberName}"`);
-      for (let lineIndex = 0; lineIndex < document.lineCount; lineIndex++) {
-        const line = document.lineAt(lineIndex);
-        const lineText = line.text;
-
-        if (memberName === 'constructor') {
-          const constructorIndex = lineText.indexOf('constructor');
-          if (constructorIndex >= 0) {
-            const fallbackPosition = new vscode.Position(lineIndex, constructorIndex);
-            const newSelection = new vscode.Selection(fallbackPosition, fallbackPosition);
-            editor.selection = newSelection;
-            editor.revealRange(new vscode.Range(fallbackPosition, fallbackPosition), vscode.TextEditorRevealType.InCenter);
-            console.log(`Fallback: found constructor at line ${lineIndex + 1}`);
-            return;
-          }
-        } else {
-          const nameIndex = lineText.indexOf(memberName);
-          if (nameIndex >= 0) {
-            const beforeName = lineText.substring(0, nameIndex);
-            const afterName = lineText.substring(nameIndex + memberName.length);
-
-            const isDeclaration =
-              beforeName.includes('function ') ||
-              beforeName.includes('const ') ||
-              beforeName.includes('let ') ||
-              beforeName.includes('var ') ||
-              beforeName.includes('public ') ||
-              beforeName.includes('private ') ||
-              beforeName.includes('protected ') ||
-              beforeName.includes('static ') ||
-              afterName.startsWith('(') ||
-              afterName.startsWith(':');
-
-            if (isDeclaration) {
-              const fallbackPosition = new vscode.Position(lineIndex, nameIndex);
-              const newSelection = new vscode.Selection(fallbackPosition, fallbackPosition);
-              editor.selection = newSelection;
-              editor.revealRange(new vscode.Range(fallbackPosition, fallbackPosition), vscode.TextEditorRevealType.InCenter);
-              console.log(`Fallback: found member declaration at line ${lineIndex + 1}`);
-              return;
-            }
-          }
-        }
-      }
-
-      // Last resort: just go to the target area
-      const lastResortPosition = new vscode.Position(targetStartLine, 0);
-      const newSelection = new vscode.Selection(lastResortPosition, lastResortPosition);
-      editor.selection = newSelection;
-      editor.revealRange(new vscode.Range(lastResortPosition, lastResortPosition), vscode.TextEditorRevealType.InCenter);
-
-      console.log(`Last resort: positioned cursor at line ${targetStartLine + 1}`);
     } catch (error) {
-      console.error('Error finding moved member:', error);
+      console.error('Error finding moved member using AST:', error);
+      this.fallbackToTargetArea(document, targetStartLine);
     }
+  }
+
+  /**
+   * Find all declaration nodes with the given name
+   */
+  private findAllDeclarationsWithName(node: ts.Node, targetName: string): ts.Node[] {
+    const declarations: ts.Node[] = [];
+
+    const visit = (node: ts.Node) => {
+      // Check if this node is a declaration with the target name
+      if (this.isDeclarationWithName(node, targetName)) {
+        declarations.push(node);
+      }
+
+      // Continue searching children
+      ts.forEachChild(node, visit);
+    };
+
+    visit(node);
+    return declarations;
+  }
+
+  /**
+   * Check if a node is a declaration with the target name
+   */
+  private isDeclarationWithName(node: ts.Node, targetName: string): boolean {
+    // Variable declarations
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === targetName) {
+      return true;
+    }
+
+    // Function declarations
+    if (ts.isFunctionDeclaration(node) && node.name && ts.isIdentifier(node.name) && node.name.text === targetName) {
+      return true;
+    }
+
+    // Class members (methods, properties)
+    if (ts.isClassElement(node) && node.name && ts.isIdentifier(node.name) && node.name.text === targetName) {
+      return true;
+    }
+
+    // Constructor
+    if (ts.isConstructorDeclaration(node) && targetName === 'constructor') {
+      return true;
+    }
+
+    // Property assignments in object literals
+    if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === targetName) {
+      return true;
+    }
+
+    // Shorthand property assignments
+    if (ts.isShorthandPropertyAssignment(node) && node.name.text === targetName) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Position cursor on the name part of a declaration node
+   */
+  private positionCursorOnDeclaration(document: vscode.TextDocument, declaration: ts.Node, memberName: string): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document !== document) {
+      return;
+    }
+
+    let namePosition: vscode.Position;
+
+    // Find the exact position of the name within the declaration
+    if (ts.isVariableDeclaration(declaration) && ts.isIdentifier(declaration.name)) {
+      namePosition = document.positionAt(declaration.name.getStart());
+    } else if (ts.isFunctionDeclaration(declaration) && declaration.name && ts.isIdentifier(declaration.name)) {
+      namePosition = document.positionAt(declaration.name.getStart());
+    } else if (ts.isClassElement(declaration) && declaration.name && ts.isIdentifier(declaration.name)) {
+      namePosition = document.positionAt(declaration.name.getStart());
+    } else if (ts.isConstructorDeclaration(declaration)) {
+      // For constructor, find the 'constructor' keyword
+      const constructorKeyword = declaration.getChildren().find(child => child.kind === ts.SyntaxKind.ConstructorKeyword);
+      if (constructorKeyword) {
+        namePosition = document.positionAt(constructorKeyword.getStart());
+      } else {
+        namePosition = document.positionAt(declaration.getStart());
+      }
+    } else if (ts.isPropertyAssignment(declaration) && ts.isIdentifier(declaration.name)) {
+      namePosition = document.positionAt(declaration.name.getStart());
+    } else if (ts.isShorthandPropertyAssignment(declaration)) {
+      namePosition = document.positionAt(declaration.name.getStart());
+    } else {
+      // Fallback to the start of the declaration
+      namePosition = document.positionAt(declaration.getStart());
+    }
+
+    // Position cursor at the name
+    const newSelection = new vscode.Selection(namePosition, namePosition);
+    editor.selection = newSelection;
+    editor.revealRange(new vscode.Range(namePosition, namePosition), vscode.TextEditorRevealType.InCenter);
+
+    console.log(`✓ Positioned cursor on declaration of "${memberName}" at line ${namePosition.line + 1}, column ${namePosition.character + 1}`);
+  }
+
+  /**
+   * Fallback to target area when AST search fails
+   */
+  private fallbackToTargetArea(document: vscode.TextDocument, targetStartLine: number): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document !== document) {
+      return;
+    }
+
+    const fallbackPosition = new vscode.Position(targetStartLine, 0);
+    const newSelection = new vscode.Selection(fallbackPosition, fallbackPosition);
+    editor.selection = newSelection;
+    editor.revealRange(new vscode.Range(fallbackPosition, fallbackPosition), vscode.TextEditorRevealType.InCenter);
+
+    console.log(`Fallback: positioned cursor at line ${targetStartLine + 1}`);
   }
 
   // ========================================
