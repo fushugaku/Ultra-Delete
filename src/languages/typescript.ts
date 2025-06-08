@@ -277,9 +277,9 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     for (let i = 0; i < allMembers.length; i++) {
       const member = allMembers[i];
 
-      // Check if any selection intersects with this member
+      // Check if any selection intersects with this member's line (line-based detection)
       for (const selection of selections) {
-        if (this.rangesIntersect(selection, member.range)) {
+        if (this.selectionIntersectsWithMemberLine(selection, member)) {
           selectedMembers.push({ ...member, index: i });
           console.log(`Selected member: "${member.name}" (index ${i})`);
           break; // Don't add the same member multiple times
@@ -300,6 +300,168 @@ export class TypeScriptHandler extends BaseLanguageHandler {
    */
   private rangesIntersect(range1: vscode.Range, range2: vscode.Range): boolean {
     return !(range1.end.isBefore(range2.start) || range2.end.isBefore(range1.start));
+  }
+
+  /**
+ * Check if a selection intersects with the first line of a member (simple line-based approach)
+ */
+  private selectionIntersectsWithMemberLine(
+    selection: vscode.Selection,
+    member: { range: vscode.Range, text: string, name: string }
+  ): boolean {
+    // Simple approach: check if cursor line intersects with the first line of the member
+    // This covers most cases and is much more reliable than complex AST parsing
+    const selectionStartLine = selection.start.line;
+    const selectionEndLine = selection.end.line;
+    const memberStartLine = member.range.start.line;
+
+    console.log(`  Checking selection lines ${selectionStartLine + 1}-${selectionEndLine + 1} vs member "${member.name}" start line ${memberStartLine + 1}`);
+
+    // Check if the selection overlaps with the member's first line
+    const intersects = memberStartLine >= selectionStartLine && memberStartLine <= selectionEndLine;
+
+    if (intersects) {
+      console.log(`  ✓ Selection intersects with member "${member.name}"`);
+    }
+
+    return intersects;
+  }
+
+  /**
+ * Find the line number where the member name is declared using AST
+ */
+  private findMemberNameLine(
+    document: vscode.TextDocument,
+    member: { range: vscode.Range, text: string, name: string }
+  ): number {
+    try {
+      // Create a mini source file just for this member to find the name position
+      const memberText = member.text;
+      const sourceFile = ts.createSourceFile(
+        'temp.ts',
+        memberText,
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TS
+      );
+
+      // First try to find declaration nodes that match the member name
+      const declarations = this.findAllDeclarationsWithName(sourceFile, member.name);
+
+      let targetNode: ts.Node | null = null;
+
+      if (declarations.length > 0) {
+        targetNode = declarations[0];
+        console.log(`  Found declaration for "${member.name}"`);
+      } else {
+        // If no declarations found, look for call expressions (like onBeforeMount())
+        console.log(`  No declarations found for "${member.name}", looking for call expressions...`);
+        targetNode = this.findCallExpressionWithName(sourceFile, member.name);
+
+        if (targetNode) {
+          console.log(`  Found call expression for "${member.name}"`);
+        } else {
+          console.log(`  No call expressions found for "${member.name}"`);
+          return -1;
+        }
+      }
+
+      // Get the position of the target node relative to the member start
+      const nameOffset = targetNode.getStart();
+
+      // Convert offset within member text to line number within member
+      const memberLines = memberText.split('\n');
+      let currentOffset = 0;
+
+      for (let lineIndex = 0; lineIndex < memberLines.length; lineIndex++) {
+        const lineLength = memberLines[lineIndex].length + 1; // +1 for newline
+
+        if (currentOffset <= nameOffset && nameOffset < currentOffset + lineLength) {
+          // Found the line - convert to document line number
+          const memberNameLineInDocument = member.range.start.line + lineIndex;
+          console.log(`  Found member "${member.name}" name at member line ${lineIndex}, document line ${memberNameLineInDocument + 1}`);
+          return memberNameLineInDocument;
+        }
+
+        currentOffset += lineLength;
+      }
+
+      console.log(`Could not map offset ${nameOffset} to line for member "${member.name}"`);
+      return -1;
+    } catch (error) {
+      console.log(`Error in findMemberNameLine for "${member.name}":`, error);
+      return -1;
+    }
+  }
+
+  /**
+   * Find all call expressions with the given function name
+   */
+  private findAllCallExpressionsWithName(node: ts.Node, targetName: string): ts.Node[] {
+    const callExpressions: ts.Node[] = [];
+
+    const visit = (node: ts.Node) => {
+      // Check if this node is a call expression with the target name
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === targetName) {
+        callExpressions.push(node.expression); // Add the identifier part (the function name)
+      }
+
+      // Check if this is an expression statement containing our call expression
+      if (ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)) {
+        const callExpr = node.expression;
+        if (ts.isIdentifier(callExpr.expression) && callExpr.expression.text === targetName) {
+          callExpressions.push(callExpr.expression); // Add the identifier part (the function name)
+        }
+      }
+
+      // Continue searching children
+      ts.forEachChild(node, visit);
+    };
+
+    visit(node);
+    return callExpressions;
+  }
+
+  /**
+   * Find a call expression with the given function name
+   */
+  private findCallExpressionWithName(node: ts.Node, targetName: string): ts.Node | null {
+    console.log(`    Checking node ${ts.SyntaxKind[node.kind]} for call expression "${targetName}"`);
+
+    // Check if this node is a call expression with the target name
+    if (ts.isCallExpression(node)) {
+      console.log(`    Found call expression, checking expression type: ${ts.SyntaxKind[node.expression.kind]}`);
+      if (ts.isIdentifier(node.expression)) {
+        console.log(`    Call expression has identifier: "${node.expression.text}"`);
+        if (node.expression.text === targetName) {
+          console.log(`    ✓ Found matching call expression for "${targetName}"`);
+          return node.expression; // Return the identifier part (the function name)
+        }
+      }
+    }
+
+    // Check if this is an expression statement containing our call expression
+    if (ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)) {
+      const callExpr = node.expression;
+      console.log(`    Found expression statement with call expression`);
+      if (ts.isIdentifier(callExpr.expression)) {
+        console.log(`    Expression statement call has identifier: "${callExpr.expression.text}"`);
+        if (callExpr.expression.text === targetName) {
+          console.log(`    ✓ Found matching expression statement call for "${targetName}"`);
+          return callExpr.expression; // Return the identifier part (the function name)
+        }
+      }
+    }
+
+    // Recursively search children
+    let result: ts.Node | null = null;
+    ts.forEachChild(node, (child) => {
+      if (!result) {
+        result = this.findCallExpressionWithName(child, targetName);
+      }
+    });
+
+    return result;
   }
 
   /**
@@ -1449,39 +1611,60 @@ export class TypeScriptHandler extends BaseLanguageHandler {
 
       console.log(`Found ${matchingDeclarations.length} declaration nodes with name "${memberName}"`);
 
-      if (matchingDeclarations.length === 0) {
-        console.log(`✗ No declaration nodes found for "${memberName}"`);
+      let targetNodes: ts.Node[] = [];
+
+      if (matchingDeclarations.length > 0) {
+        targetNodes = matchingDeclarations;
+        console.log(`✓ Using ${targetNodes.length} declaration nodes for "${memberName}"`);
+      } else {
+        console.log(`✗ No declaration nodes found for "${memberName}", looking for call expressions...`);
+        // Look for call expressions (like onBeforeMount())
+        const callExpressions = this.findAllCallExpressionsWithName(sourceFile, memberName);
+        console.log(`Found ${callExpressions.length} call expression nodes with name "${memberName}"`);
+
+        if (callExpressions.length > 0) {
+          targetNodes = callExpressions;
+          console.log(`✓ Using ${targetNodes.length} call expression nodes for "${memberName}"`);
+        } else {
+          console.log(`✗ No call expressions found for "${memberName}"`);
+          this.fallbackToTargetArea(document, targetStartLine);
+          return;
+        }
+      }
+
+      if (targetNodes.length === 0) {
+        console.log(`✗ No target nodes found for "${memberName}"`);
         this.fallbackToTargetArea(document, targetStartLine);
         return;
       }
 
-      // If only one declaration, use it
-      if (matchingDeclarations.length === 1) {
-        const declaration = matchingDeclarations[0];
-        this.positionCursorOnDeclaration(document, declaration, memberName);
+      // If only one target node, use it
+      if (targetNodes.length === 1) {
+        const targetNode = targetNodes[0];
+        this.positionCursorOnDeclaration(document, targetNode, memberName);
         return;
       }
 
-      // Multiple declarations found - find the one closest to the target area
-      console.log(`Multiple declarations found, selecting closest to target area (line ${targetStartLine + 1})`);
+      // Multiple target nodes found - find the one closest to the target area
+      console.log(`Multiple target nodes found, selecting closest to target area (line ${targetStartLine + 1})`);
 
-      let bestDeclaration = matchingDeclarations[0];
+      let bestNode = targetNodes[0];
       let bestDistance = Number.MAX_SAFE_INTEGER;
 
-      for (const declaration of matchingDeclarations) {
-        const declarationLine = document.positionAt(declaration.getStart()).line;
-        const distance = Math.abs(declarationLine - targetStartLine);
+      for (const node of targetNodes) {
+        const nodeLine = document.positionAt(node.getStart()).line;
+        const distance = Math.abs(nodeLine - targetStartLine);
 
-        console.log(`Declaration at line ${declarationLine + 1}, distance: ${distance}`);
+        console.log(`Target node at line ${nodeLine + 1}, distance: ${distance}`);
 
         if (distance < bestDistance) {
           bestDistance = distance;
-          bestDeclaration = declaration;
+          bestNode = node;
         }
       }
 
-      console.log(`Selected declaration at line ${document.positionAt(bestDeclaration.getStart()).line + 1} (distance: ${bestDistance})`);
-      this.positionCursorOnDeclaration(document, bestDeclaration, memberName);
+      console.log(`Selected target node at line ${document.positionAt(bestNode.getStart()).line + 1} (distance: ${bestDistance})`);
+      this.positionCursorOnDeclaration(document, bestNode, memberName);
 
     } catch (error) {
       console.error('Error finding moved member using AST:', error);
