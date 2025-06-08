@@ -41,6 +41,7 @@ export interface LanguageHandler {
   getFunctionScopeRange?(document: vscode.TextDocument, position: vscode.Position): vscode.Range | null;
   getMembersInCurrentScope?(document: vscode.TextDocument, position: vscode.Position): Array<{ range: vscode.Range, text: string, name: string }>;
   getNextMemberRange?(document: vscode.TextDocument, position: vscode.Position): vscode.Range | null;
+  getPreviousMemberRange?(document: vscode.TextDocument, position: vscode.Position): vscode.Range | null;
   sortMembersByName?(members: Array<{ range: vscode.Range, text: string, name: string }>, ascending?: boolean): Array<{ range: vscode.Range, text: string, name: string }>;
   moveMemberUp?(document: vscode.TextDocument, position: vscode.Position): { newPosition: vscode.Position, moved: boolean } | null;
   moveMemberDown?(document: vscode.TextDocument, position: vscode.Position): { newPosition: vscode.Position, moved: boolean } | null;

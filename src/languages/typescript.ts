@@ -2,6 +2,7 @@
 import * as vscode from 'vscode';
 import * as ts from 'typescript';
 import { BaseLanguageHandler, ElementType } from './base/baseLanguage';
+import { TypeScriptClassParser } from './typescript/classParser';
 
 /**
  * TypeScript language handler for intelligent code element detection and manipulation
@@ -13,6 +14,7 @@ import { BaseLanguageHandler, ElementType } from './base/baseLanguage';
  */
 export class TypeScriptHandler extends BaseLanguageHandler {
   languageIds = ['typescript', 'tsx', 'typescriptreact', 'javascript', 'jsx', 'javascriptreact'];
+  private classParser = new TypeScriptClassParser();
 
   // ========================================
   // PUBLIC API METHODS
@@ -30,8 +32,14 @@ export class TypeScriptHandler extends BaseLanguageHandler {
 
 
   getClassRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
+    // Use class parser for class declarations, fallback to original for other types
+    const classRange = this.classParser.getClassRange(document, position, word);
+    if (classRange) {
+      return classRange;
+    }
+
+    // Fallback for other declaration types
     return this.getElementRangeUsingAST(document, position, [
-      ts.SyntaxKind.ClassDeclaration,
       ts.SyntaxKind.InterfaceDeclaration,
       ts.SyntaxKind.TypeAliasDeclaration,
       ts.SyntaxKind.EnumDeclaration,
@@ -75,25 +83,8 @@ export class TypeScriptHandler extends BaseLanguageHandler {
   }
 
   getClassMemberRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
-    // First try the standard AST-based detection
-    const standardRange = this.getElementRangeUsingAST(document, position, [
-      ts.SyntaxKind.MethodDeclaration,
-      ts.SyntaxKind.PropertyDeclaration,
-      ts.SyntaxKind.GetAccessor,
-      ts.SyntaxKind.SetAccessor,
-      ts.SyntaxKind.Constructor
-    ]);
-
-    if (standardRange) {
-      return standardRange;
-    }
-
-    // If standard detection failed, check if cursor is on an access modifier
-    if (this.isAccessModifier(word)) {
-      return this.getClassMemberRangeFromModifier(document, position, word);
-    }
-
-    return null;
+    // Use the dedicated class parser for class member detection
+    return this.classParser.getClassMemberRange(document, position, word);
   }
 
   getConditionalBlockRange(document: vscode.TextDocument, position: vscode.Position, word: string): vscode.Range | null {
@@ -203,6 +194,44 @@ export class TypeScriptHandler extends BaseLanguageHandler {
     // If no member found after current position, wrap to the first member
     console.log(`No member after current position, wrapping to first: ${members[0]?.name}`);
     return members[0].range;
+  }
+
+  /**
+   * Find the previous member before the current position
+   */
+  getPreviousMemberRange(document: vscode.TextDocument, position: vscode.Position): vscode.Range | null {
+    const members = this.getMembersInCurrentScope(document, position);
+    if (members.length === 0) {
+      console.log('No members found for previous member navigation');
+      return null;
+    }
+
+    console.log(`Found ${members.length} members, looking for previous before position ${position.line}:${position.character}`);
+
+    // Find the last member that starts before the current position
+    const currentOffset = document.offsetAt(position);
+    let previousMember: { range: vscode.Range, text: string, name: string } | null = null;
+
+    for (const member of members) {
+      const memberOffset = document.offsetAt(member.range.start);
+      console.log(`Checking member "${member.name}" at offset ${memberOffset} vs current ${currentOffset}`);
+      if (memberOffset < currentOffset) {
+        previousMember = member;
+        console.log(`Candidate previous member: ${member.name}`);
+      } else {
+        break; // Since members are sorted by position, we can stop here
+      }
+    }
+
+    if (previousMember) {
+      console.log(`Found previous member: ${previousMember.name}`);
+      return previousMember.range;
+    }
+
+    // If no member found before current position, wrap to the last member
+    const lastMember = members[members.length - 1];
+    console.log(`No member before current position, wrapping to last: ${lastMember?.name}`);
+    return lastMember.range;
   }
 
   /**

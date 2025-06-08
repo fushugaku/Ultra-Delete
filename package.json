@@ -2,7 +2,7 @@
   "name": "ultra-delete",
   "displayName": "Ultra Cut Delete",
   "description": "Delete or cut entire variables, functions, object keys, or class members with a single keypress",
-  "version": "1.7.1",
+  "version": "1.7.4",
   "publisher": "henry-dorsett-case",
   "author": {
     "name": "Georgy Sosnin",
@@ -63,6 +63,11 @@
         "category": "Variable Function Deleter"
       },
       {
+        "command": "variableFunctionDeleter.goToPreviousMember",
+        "title": "Go to Previous Member",
+        "category": "Variable Function Deleter"
+      },
+      {
         "command": "variableFunctionDeleter.selectNextMember",
         "title": "Select Next Member",
         "category": "Variable Function Deleter"
@@ -114,8 +119,14 @@
       },
       {
         "command": "variableFunctionDeleter.goToNextMember",
-        "key": "ctrl+shift+n",
-        "mac": "cmd+shift+n",
+        "key": "alt+down",
+        "mac": "alt+down",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "variableFunctionDeleter.goToPreviousMember",
+        "key": "alt+up",
+        "mac": "alt+up",
         "when": "editorTextFocus"
       },
       {

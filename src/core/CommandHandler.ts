@@ -13,6 +13,7 @@ export class CommandHandler {
       vscode.commands.registerCommand('variableFunctionDeleter.cutAtCursor', () => this.executeAction('cut')),
       vscode.commands.registerCommand('variableFunctionDeleter.selectFunctionScope', () => this.selectFunctionScope()),
       vscode.commands.registerCommand('variableFunctionDeleter.goToNextMember', () => this.goToNextMember()),
+      vscode.commands.registerCommand('variableFunctionDeleter.goToPreviousMember', () => this.goToPreviousMember()),
       vscode.commands.registerCommand('variableFunctionDeleter.selectNextMember', () => this.selectNextMember()),
       vscode.commands.registerCommand('variableFunctionDeleter.sortMembersAZ', () => this.sortSelectedMembers(true)),
       vscode.commands.registerCommand('variableFunctionDeleter.sortMembersZA', () => this.sortSelectedMembers(false)),
@@ -196,6 +197,39 @@ export class CommandHandler {
     } catch (error) {
       console.error('Error navigating to next member:', error);
       vscode.window.showErrorMessage(`Error navigating to next member: ${error}`);
+    }
+  }
+
+  private goToPreviousMember(): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return;
+
+    const document = editor.document;
+    const languageId = document.languageId;
+    const position = editor.selection.active;
+
+    if (!['typescript', 'tsx', 'typescriptreact', 'javascript', 'jsx', 'javascriptreact'].includes(languageId)) {
+      vscode.window.showInformationMessage('Member navigation is currently only supported for JavaScript/TypeScript files');
+      return;
+    }
+
+    try {
+      const handler = this.elementDetector['handlers'].get(languageId);
+      if (!handler?.getPreviousMemberRange) {
+        vscode.window.showInformationMessage('Member navigation not available for this language');
+        return;
+      }
+
+      const previousMemberRange = handler.getPreviousMemberRange(document, position);
+      if (previousMemberRange) {
+        editor.selection = new vscode.Selection(previousMemberRange.start, previousMemberRange.start);
+        editor.revealRange(previousMemberRange, vscode.TextEditorRevealType.InCenter);
+      } else {
+        vscode.window.showInformationMessage('No previous member found');
+      }
+    } catch (error) {
+      console.error('Error navigating to previous member:', error);
+      vscode.window.showErrorMessage(`Error navigating to previous member: ${error}`);
     }
   }
 
