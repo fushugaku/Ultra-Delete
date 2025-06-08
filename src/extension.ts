@@ -515,13 +515,7 @@ function moveMemberUp() {
 
     const result = handler.moveMemberUp(document, position);
     if (result && result.moved) {
-      // Move cursor to the new position after a short delay to let the edit complete
-      setTimeout(() => {
-        if (editor === vscode.window.activeTextEditor) {
-          editor.selection = new vscode.Selection(result.newPosition, result.newPosition);
-          editor.revealRange(new vscode.Range(result.newPosition, result.newPosition), vscode.TextEditorRevealType.InCenter);
-        }
-      }, 100);
+      // The TypeScript handler handles cursor positioning automatically
       vscode.window.showInformationMessage('Member moved up');
     } else {
       vscode.window.showInformationMessage('Cannot move member up (already at top or no member found)');
@@ -563,13 +557,7 @@ function moveMemberDown() {
 
     const result = handler.moveMemberDown(document, position);
     if (result && result.moved) {
-      // Move cursor to the new position after a short delay to let the edit complete
-      setTimeout(() => {
-        if (editor === vscode.window.activeTextEditor) {
-          editor.selection = new vscode.Selection(result.newPosition, result.newPosition);
-          editor.revealRange(new vscode.Range(result.newPosition, result.newPosition), vscode.TextEditorRevealType.InCenter);
-        }
-      }, 100);
+      // The TypeScript handler handles cursor positioning automatically
       vscode.window.showInformationMessage('Member moved down');
     } else {
       vscode.window.showInformationMessage('Cannot move member down (already at bottom or no member found)');
