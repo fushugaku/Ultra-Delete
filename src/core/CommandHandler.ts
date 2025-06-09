@@ -19,7 +19,8 @@ export class CommandHandler {
       vscode.commands.registerCommand('variableFunctionDeleter.sortMembersZA', () => this.sortSelectedMembers(false)),
       vscode.commands.registerCommand('variableFunctionDeleter.selectNextMemberAdd', () => this.selectNextMemberAdd()),
       vscode.commands.registerCommand('variableFunctionDeleter.moveMemberUp', () => this.moveMemberUp()),
-      vscode.commands.registerCommand('variableFunctionDeleter.moveMemberDown', () => this.moveMemberDown())
+      vscode.commands.registerCommand('variableFunctionDeleter.moveMemberDown', () => this.moveMemberDown()),
+      vscode.commands.registerCommand('variableFunctionDeleter.extractSelectionToFunction', () => this.extractSelectionToFunction())
     ];
 
     commands.forEach(command => context.subscriptions.push(command));
@@ -522,6 +523,39 @@ export class CommandHandler {
     } catch (error) {
       console.error('Error moving member down:', error);
       vscode.window.showErrorMessage(`Error moving member down: ${error}`);
+    }
+  }
+
+  private async extractSelectionToFunction(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return;
+
+    const document = editor.document;
+    const languageId = document.languageId;
+    const selection = editor.selection;
+
+    // Check if there's a valid selection
+    if (selection.isEmpty) {
+      vscode.window.showInformationMessage('Please select code to extract to a function');
+      return;
+    }
+
+    if (!['typescript', 'tsx', 'typescriptreact', 'javascript', 'jsx', 'javascriptreact'].includes(languageId)) {
+      vscode.window.showInformationMessage('Extract to function is currently only supported for JavaScript/TypeScript files');
+      return;
+    }
+
+    try {
+      const handler = this.elementDetector['handlers'].get(languageId);
+      if (!handler?.extractSelectionToFunction) {
+        vscode.window.showInformationMessage('Extract to function not available for this language');
+        return;
+      }
+
+      await handler.extractSelectionToFunction(document, selection);
+    } catch (error) {
+      console.error('Error extracting selection to function:', error);
+      vscode.window.showErrorMessage(`Error extracting to function: ${error}`);
     }
   }
 } 

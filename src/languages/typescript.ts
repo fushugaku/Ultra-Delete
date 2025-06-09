@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import * as ts from 'typescript';
 import { BaseLanguageHandler, ElementType } from './base/baseLanguage';
 import { TypeScriptClassParser } from './typescript/classParser';
+import { TypeScriptExtractionService } from './typescript/extractionService';
 
 /**
  * TypeScript language handler for intelligent code element detection and manipulation
@@ -15,6 +16,7 @@ import { TypeScriptClassParser } from './typescript/classParser';
 export class TypeScriptHandler extends BaseLanguageHandler {
   languageIds = ['typescript', 'tsx', 'typescriptreact', 'javascript', 'jsx', 'javascriptreact'];
   private classParser = new TypeScriptClassParser();
+  private extractionService = new TypeScriptExtractionService();
 
   // ========================================
   // PUBLIC API METHODS
@@ -256,6 +258,36 @@ export class TypeScriptHandler extends BaseLanguageHandler {
    */
   moveMemberDown(document: vscode.TextDocument, position: vscode.Position): { newPosition: vscode.Position, moved: boolean } | null {
     return this.moveMember(document, position, 'down');
+  }
+
+  /**
+   * Extract selected code to a new function
+   */
+  async extractSelectionToFunction(document: vscode.TextDocument, selection: vscode.Selection): Promise<boolean> {
+    try {
+      // Analyze and generate the extraction
+      const extractionResult = await this.extractionService.extractSelectionToFunction(document, selection);
+
+      if (!extractionResult) {
+        vscode.window.showErrorMessage('Could not extract the selected code to a function');
+        return false;
+      }
+
+      // Apply the extraction
+      const success = await this.extractionService.applyExtraction(document, selection, extractionResult);
+
+      if (success) {
+        vscode.window.showInformationMessage(`Successfully extracted to function: ${extractionResult.functionName}`);
+        return true;
+      } else {
+        vscode.window.showErrorMessage('Failed to apply the extraction');
+        return false;
+      }
+    } catch (error) {
+      console.error('Error in extractSelectionToFunction:', error);
+      vscode.window.showErrorMessage(`Error extracting selection: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
   }
 
   /**

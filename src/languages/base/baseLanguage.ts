@@ -45,6 +45,7 @@ export interface LanguageHandler {
   sortMembersByName?(members: Array<{ range: vscode.Range, text: string, name: string }>, ascending?: boolean): Array<{ range: vscode.Range, text: string, name: string }>;
   moveMemberUp?(document: vscode.TextDocument, position: vscode.Position): { newPosition: vscode.Position, moved: boolean } | null;
   moveMemberDown?(document: vscode.TextDocument, position: vscode.Position): { newPosition: vscode.Position, moved: boolean } | null;
+  extractSelectionToFunction?(document: vscode.TextDocument, selection: vscode.Selection): Promise<boolean>;
 
   usesBraces(): boolean;
   isHtmlLike(): boolean;
